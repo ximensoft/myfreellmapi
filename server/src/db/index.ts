@@ -200,8 +200,6 @@ function seedModels(db: Database.Database) {
     ['zhipu', 'glm-4.5-flash', 'GLM-4.5 Flash', 5, 4, 'Large', null, null, null, 1000000, '~30M', 131072],
     ['moonshot', 'kimi-latest', 'Kimi Latest', 4, 8, 'Large', 60, null, null, 500000, '~15M', 200000],
     ['minimax', 'MiniMax-M1', 'MiniMax M1', 5, 8, 'Large', 20, null, 1000000, null, '~30M', 200000],
-    // SiliconFlow — zero-cost free model (50 req/day, tools supported). See migrateModelsV15.
-    ['siliconflow', 'Qwen/Qwen3-8B', 'Qwen3 8B (SiliconFlow)', 30, 3, 'Small', null, 50, null, null, '50 req/day', 32768],
   ];
 
   const insertMany = db.transaction(() => {
@@ -1267,39 +1265,24 @@ function migrateModelsV14(db: Database.Database) {
 }
 
 /**
- * V15 (May 2026): add SiliconFlow (new platform).
+ * V15 (May 2026): purge SiliconFlow.
  *
- * OpenAI-compatible at api.siliconflow.com/v1. New accounts get a one-time
- * gift balance, but a small set of models are genuinely $0 ("free models",
- * 50 req/day; 1000/day after any credit purchase). Probed 2026-05: a call to
- * Qwen/Qwen3-8B left the account balance unchanged (zero-cost) and tool calls
- * round-trip; Qwen2.5-7B-Instruct DID decrement the balance (paid), so only
- * the confirmed zero-cost row is seeded. Small 8B model — ranked low so the
- * router only falls to it near the end of the chain. No card required.
+ * SiliconFlow was briefly added (#131) on the belief Qwen/Qwen3-8B was a $0
+ * "free model". Re-verification showed it is PAID ($0.06/M in+out): the
+ * account balance dropped 0.9999 -> 0.9998 across ~2.7K tokens, and the
+ * official pricing page lists it at $0.06/M. The earlier "zero-cost" read was
+ * a 4-decimal rounding artifact on a tiny call. SiliconFlow's .com endpoint is
+ * a one-time $1 trial credit, not a recurring free tier — same disqualifier
+ * as Chutes — so the provider was reverted. This removes any orphaned row from
+ * a DB that already ran the original V15. No-op on DBs that never had it.
  */
 function migrateModelsV15(db: Database.Database) {
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO models (platform, model_id, display_name, intelligence_rank, speed_rank, size_label, rpm_limit, rpd_limit, tpm_limit, tpd_limit, monthly_token_budget, context_window)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const additions: Array<[string, string, string, number, number, string, number | null, number | null, number | null, number | null, string, number | null]> = [
-    ['siliconflow', 'Qwen/Qwen3-8B', 'Qwen3 8B (SiliconFlow)', 30, 3, 'Small', null, 50, null, null, '50 req/day', 32768],
-  ];
-
-  const apply = db.transaction(() => {
-    for (const a of additions) insert.run(...a);
-    const missing = db.prepare(`
-      SELECT m.id FROM models m
-      LEFT JOIN fallback_config f ON m.id = f.model_db_id
-      WHERE f.id IS NULL ORDER BY m.intelligence_rank ASC
-    `).all() as { id: number }[];
-    if (missing.length > 0) {
-      const maxPriority = (db.prepare('SELECT COALESCE(MAX(priority), 0) AS mx FROM fallback_config').get() as { mx: number }).mx;
-      const addFb = db.prepare('INSERT INTO fallback_config (model_db_id, priority, enabled) VALUES (?, ?, 1)');
-      for (let i = 0; i < missing.length; i++) addFb.run(missing[i].id, maxPriority + i + 1);
-    }
-  });
-  apply();
+  db.prepare(`
+    DELETE FROM fallback_config WHERE model_db_id IN (
+      SELECT id FROM models WHERE platform = 'siliconflow'
+    )
+  `).run();
+  db.prepare(`DELETE FROM models WHERE platform = 'siliconflow'`).run();
 }
 
 function ensureUnifiedKey(db: Database.Database) {
