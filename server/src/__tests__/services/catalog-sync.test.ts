@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { initDb, getDb } from '../../db/index.js';
-import { applyCatalog } from '../../services/catalog-sync.js';
+import { initDb, getDb, setSetting, getSetting } from '../../db/index.js';
+import { applyCatalog, reapplyCachedCatalog, MIN_CATALOG_VERSION } from '../../services/catalog-sync.js';
+import { migrateDbSchema } from '../../db/migrations.js';
 
 // applyCatalog is the write path between the published catalog and the live
 // router DB. These tests lock its contract: catalog metadata always wins, the
@@ -173,5 +174,74 @@ describe('applyCatalog', () => {
     expect(all.map((q) => q.slug)).toEqual(['fresh-quirk']);
     const targets = getDb().prepare('SELECT platform, model_glob FROM quirk_targets').all();
     expect(targets).toEqual([{ platform: 'groq', model_glob: null }]);
+  });
+});
+
+// reapplyCachedCatalog keeps the catalog authoritative across restarts:
+// migrations re-assert the bundled baseline on every boot (INSERT OR IGNORE
+// re-adds catalog-deleted models, family rules reset flags) while the boot
+// sync 304s on an unchanged version. The cached re-apply closes that gap.
+describe('reapplyCachedCatalog', () => {
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = '0'.repeat(64);
+    initDb(':memory:');
+  });
+
+  function cacheCatalog(catalog: AnyCatalog) {
+    setSetting('catalog_applied_version', catalog.version);
+    setSetting('catalog_applied_tier', catalog.tier);
+    setSetting('catalog_applied_json', JSON.stringify(catalog));
+  }
+
+  it('restores catalog state over a re-run of the baseline migrations', () => {
+    // Catalog says: one baseline model is gone. The victim must be one that a
+    // re-runnable migration re-inserts on boot (V23's INSERT OR IGNORE rows),
+    // not a first-init-only seed row — that re-insertion is the exact drift
+    // this function exists to undo.
+    const models = existingAsCatalogModels();
+    const victim = models.find((m) => m.platform === 'openrouter' && m.modelId === 'moonshotai/kimi-k2.6:free')!;
+    expect(victim).toBeDefined();
+    const remaining = models.filter((m) => m.modelId !== victim.modelId);
+    const catalog = catalogOf(remaining);
+    applyCatalog(getDb(), catalog);
+    cacheCatalog(catalog);
+    expect(
+      getDb().prepare('SELECT id FROM models WHERE platform = ? AND model_id = ?').get(victim.platform, victim.modelId),
+    ).toBeUndefined();
+
+    // Simulate a restart: migrations re-insert the baseline model.
+    migrateDbSchema(getDb());
+    expect(
+      getDb().prepare('SELECT id FROM models WHERE platform = ? AND model_id = ?').get(victim.platform, victim.modelId),
+    ).toBeDefined();
+
+    // Boot re-apply removes it again from the local cache, no network.
+    const result = reapplyCachedCatalog();
+    expect(result.reapplied).toBe(true);
+    expect(result.version).toBe(catalog.version);
+    expect(
+      getDb().prepare('SELECT id FROM models WHERE platform = ? AND model_id = ?').get(victim.platform, victim.modelId),
+    ).toBeUndefined();
+  });
+
+  it('clears the applied version when an older install has no cached document', () => {
+    getDb().prepare("DELETE FROM settings WHERE key = 'catalog_applied_json'").run();
+    setSetting('catalog_applied_version', '2099.01.01');
+    const result = reapplyCachedCatalog();
+    expect(result.reapplied).toBe(false);
+    expect(getSetting('catalog_applied_version')).toBeUndefined();
+  });
+
+  it('is a no-op without throwing on a corrupt cache', () => {
+    setSetting('catalog_applied_json', 'not json at all {');
+    expect(reapplyCachedCatalog().reapplied).toBe(false);
+  });
+
+  it('refuses a cached catalog older than the bundled baseline', () => {
+    const catalog = catalogOf(existingAsCatalogModels());
+    catalog.version = '2000.01.01';
+    expect(catalog.version < MIN_CATALOG_VERSION).toBe(true);
+    setSetting('catalog_applied_json', JSON.stringify(catalog));
+    expect(reapplyCachedCatalog().reapplied).toBe(false);
   });
 });
