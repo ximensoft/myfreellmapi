@@ -573,12 +573,48 @@ export class GoogleProvider extends BaseProvider {
 
   async validateKey(apiKey: string): Promise<boolean> {
     // Transport errors propagate — health.ts marks status='error' without
-    // counting toward auto-disable. Only confirmed 401/403 disables a key.
+    // counting toward auto-disable.
     const res = await this.fetchWithTimeout(
       `${API_BASE}/models?key=${apiKey}`,
       { method: 'GET' },
       10000,
     );
-    return res.status !== 401 && res.status !== 403;
+    if (res.ok) return true;
+
+    // Google's error taxonomy is NOT the usual 401/403-means-bad-key (#268):
+    //   - bad/expired key            → HTTP 400 INVALID_ARGUMENT / reason API_KEY_INVALID
+    //   - API not enabled on project → HTTP 403 PERMISSION_DENIED / reason SERVICE_DISABLED
+    //   - IP / referrer / API-key restriction, or empty key → HTTP 403 PERMISSION_DENIED
+    //   - unsupported region         → HTTP 400 FAILED_PRECONDITION ("User location is not supported")
+    // The old check (`status !== 401 && status !== 403`) had this exactly
+    // backwards: it marked a genuinely-bad 400 key as HEALTHY, and auto-disabled
+    // a perfectly good key that merely hit a permission/region/restriction 403 on
+    // the host running the proxy (the key still works for generateContent from
+    // another network). So only a CONFIRMED bad credential returns false (which
+    // counts toward auto-disable); every other non-2xx is inconclusive and throws
+    // so health.ts records status='error' WITHOUT disabling a usable key.
+    type GoogleErrorBody = { error?: { message?: unknown; status?: unknown; details?: unknown } };
+    let body: GoogleErrorBody | null = null;
+    try { body = (await res.json()) as GoogleErrorBody; } catch { /* non-JSON error body */ }
+    const err = body?.error;
+    const details = Array.isArray(err?.details) ? err!.details as Array<{ reason?: unknown }> : [];
+    const reason = details.find(d => typeof d?.reason === 'string')?.reason as string | undefined;
+    const message = typeof err?.message === 'string' ? err.message : '';
+    const gStatus = typeof err?.status === 'string' ? err.status : undefined;
+
+    const badCredentials =
+      res.status === 401 ||
+      reason === 'API_KEY_INVALID' ||
+      /API key not valid|API key expired|API_KEY_INVALID/i.test(message);
+    if (badCredentials) {
+      console.warn(`[Google] validateKey: key rejected as invalid (HTTP ${res.status}${reason ? ` ${reason}` : ''})`);
+      return false;
+    }
+
+    console.warn(
+      `[Google] validateKey: inconclusive HTTP ${res.status} (${gStatus ?? 'UNKNOWN'}${reason ? `/${reason}` : ''}): ${message.slice(0, 200)} ` +
+      `— treating as 'error', not auto-disabling (the key may be valid but blocked by region/permission/restriction on this host).`,
+    );
+    throw new Error(`Google key validation inconclusive (HTTP ${res.status}${gStatus ? ` ${gStatus}` : ''})`);
   }
 }

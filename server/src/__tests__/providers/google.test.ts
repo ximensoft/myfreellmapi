@@ -89,6 +89,44 @@ describe('GoogleProvider', () => {
     expect(await provider.validateKey('invalid-key')).toBe(false);
   });
 
+  // #268: Google reports a bad key as HTTP 400 INVALID_ARGUMENT / API_KEY_INVALID,
+  // not 401/403. A confirmed-bad key must return false (→ auto-disable counter).
+  it('validateKey returns false for a genuinely invalid key (HTTP 400 API_KEY_INVALID)', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({
+        error: {
+          code: 400,
+          message: 'API key not valid. Please pass a valid API key.',
+          status: 'INVALID_ARGUMENT',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID' }],
+        },
+      }),
+    } as any);
+    expect(await provider.validateKey('bad-key')).toBe(false);
+  });
+
+  // #268: a permission/region/restriction 403 (e.g. API not enabled on the project,
+  // or an IP/API-key restriction on the proxy host) must NOT auto-disable a key that
+  // may still work for generateContent elsewhere — validateKey throws so health.ts
+  // records status='error' instead of incrementing the disable counter.
+  it('validateKey throws (does not return false) on a permission/region 403', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: () => Promise.resolve({
+        error: {
+          code: 403,
+          message: 'Generative Language API has not been used in project before or it is disabled.',
+          status: 'PERMISSION_DENIED',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'SERVICE_DISABLED' }],
+        },
+      }),
+    } as any);
+    await expect(provider.validateKey('region-blocked-key')).rejects.toThrow(/inconclusive/i);
+  });
+
   it('should translate system messages to systemInstruction', async () => {
     let capturedBody: any;
     vi.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
