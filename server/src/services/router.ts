@@ -867,7 +867,12 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   const strategy = getRoutingStrategy();
   if (strategy !== 'priority') refreshStatsCache(db);
 
-  const chain = prefetchedChain ?? getActiveChain(db).filter(e => e.enabled);
+  // Always filter by pm.enabled, even when a prefetched chain is provided.
+  // getActiveChain's SQL filters m.enabled=1 (catalog-level) but NOT
+  // pm.enabled (profile-level), so a model the user explicitly disabled in
+  // their profile still appears in the chain. Without this filter it would
+  // pollute the top3 log AND be tried by the routing loop.
+  const chain = (prefetchedChain ?? getActiveChain(db)).filter(e => e.enabled);
 
   const sortedChain = orderChain(chain, strategy);
 

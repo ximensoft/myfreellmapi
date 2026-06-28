@@ -14,7 +14,7 @@ import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
 import { rescueInlineToolCalls, startsWithDialectMarker, couldBecomeDialectMarker, containsDialectMarker } from '../lib/tool-call-rescue.js';
 import { getContextHandoffMode, recordIncomingMessages, maybeInjectContextHandoff, recordSuccessfulModel, hasPriorModel, HANDOFF_MAX_TOKENS } from '../services/context-handoff.js';
 import { isFusionModel, runFusion, fusionConfigSchema, FusionError, FUSION_MODEL_ID } from '../services/fusion.js';
-import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError } from '../lib/error-classify.js';
+import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError, isRequestValidationError } from '../lib/error-classify.js';
 import { logRequest } from '../lib/request-log.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import { inferQuotaPoolKey, type QuotaObservationContext } from '../services/provider-quota.js';
@@ -416,7 +416,7 @@ const chatCompletionSchema = z.object({
 // service can share them without an import cycle; imported above for internal
 // use and re-exported here for existing importers (routes/responses.ts,
 // proxy-retry.test.ts) that pull them from this module.
-export { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError };
+export { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError, isRequestValidationError };
 
 // Pull the incremental text out of a streaming chunk for token counting.
 // Must tolerate chunks that carry no `choices` array at all: some providers
@@ -728,11 +728,17 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         // but failed for other reasons like cooldowns or rate limits).
         const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
         const skipped = rawDisposition.length - disposition.length;
+        const reasonTally: Record<string, number> = {};
+        for (const d of disposition) {
+          const reason = d.split(': ').slice(1).join(': ') || 'unknown';
+          reasonTally[reason] = (reasonTally[reason] ?? 0) + 1;
+        }
+        const legacySummary = Object.entries(reasonTally).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${c}x ${r}`).join(', ');
         console.warn(
           `[Proxy] legacy completions routing exhausted (no upstream tried) req=${shortRequestId(requestGroupId)} ` +
           `requested=${requestedModelLabel} candidates=${disposition.length}` +
           (skipped ? ` (+${skipped} no key)` : '') +
-          (disposition.length ? `:\n  ${disposition.join('\n  ')}` : ''),
+          (legacySummary ? ` - ${legacySummary}` : ''),
         );
         res.status(err.status ?? 503).json({
           error: { message: err.message, type: 'routing_error' },
@@ -921,10 +927,14 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         continue;
       }
 
-      res.status(502).json({
+      // Non-retryable error: request validation errors (e.g. tool_choice without
+      // tools) are client faults → 400; everything else is a provider fault → 502.
+      const legacyNonRetryStatus = isRequestValidationError(err) ? 400 : 502;
+      const legacyNonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'provider_error';
+      res.status(legacyNonRetryStatus).json({
         error: {
           message: `Provider error (${route.displayName}): ${safeError}`,
-          type: 'provider_error',
+          type: legacyNonRetryType,
         },
       });
       return;
@@ -1365,11 +1375,17 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         // but failed for other reasons like cooldowns or rate limits).
         const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
         const skipped = rawDisposition.length - disposition.length;
+        const reasonTally2: Record<string, number> = {};
+        for (const d of disposition) {
+          const reason = d.split(': ').slice(1).join(': ') || 'unknown';
+          reasonTally2[reason] = (reasonTally2[reason] ?? 0) + 1;
+        }
+        const chatSummary = Object.entries(reasonTally2).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${c}x ${r}`).join(', ');
         console.warn(
           `[Proxy] routing exhausted (no upstream tried) req=${shortRequestId(requestGroupId)} ` +
           `requested=${requestedModelLabel} candidates=${disposition.length}` +
           (skipped ? ` (+${skipped} no key)` : '') +
-          (disposition.length ? `:\n  ${disposition.join('\n  ')}` : ''),
+          (chatSummary ? ` - ${chatSummary}` : ''),
         );
         res.status(err.status ?? 503).json({
           error: { message: err.message, type: 'routing_error' },
@@ -1802,11 +1818,14 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         continue;
       }
 
-      // Non-retryable error (auth, 4xx, etc.): don't retry
-      res.status(502).json({
+      // Non-retryable error: request validation errors (e.g. tool_choice without
+      // tools) are client faults → 400; everything else is a provider fault → 502.
+      const chatNonRetryStatus = isRequestValidationError(err) ? 400 : 502;
+      const chatNonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'provider_error';
+      res.status(chatNonRetryStatus).json({
         error: {
           message: `Provider error (${route.displayName}): ${safeError}`,
-          type: 'provider_error',
+          type: chatNonRetryType,
         },
       });
       return;

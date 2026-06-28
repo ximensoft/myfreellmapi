@@ -196,7 +196,7 @@ const modelEntrySchema = z.union([
   z.object({ model: z.string().min(1), displayName: z.string().optional() }),
 ]);
 const customProviderSchema = z.object({
-  providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores'),
+  providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores').default('custom'),
   baseUrl: z.string().url('baseUrl must be a valid URL'),
   model: z.string().optional(),
   models: z.array(modelEntrySchema).optional(),

@@ -19,7 +19,7 @@ import { getUnifiedApiKey } from '../db/index.js';
 import { contentToString } from '../lib/content.js';
 import { repairToolArguments, toolSchemaMap } from '../lib/tool-args.js';
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
-import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError } from '../lib/error-classify.js';
+import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError, isRequestValidationError } from '../lib/error-classify.js';
 import { logRequest } from '../lib/request-log.js';
 import { extractApiToken, timingSafeStringEqual, getStickyModel, setStickyModel } from './proxy.js';
 import { resolveAnthropicModel } from '../services/anthropic-map.js';
@@ -471,7 +471,9 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         continue;
       }
 
-      sendError(res, 502, 'api_error', `Provider error (${route.displayName}): ${safeError}`);
+      const nonRetryStatus = isRequestValidationError(err) ? 400 : 502;
+      const nonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'api_error';
+      sendError(res, nonRetryStatus, nonRetryType, `Provider error (${route.displayName}): ${safeError}`);
       return;
     }
   }

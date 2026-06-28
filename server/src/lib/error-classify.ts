@@ -51,7 +51,11 @@ export function isRetryableError(err: any): boolean {
     // limits, unsupported params). The matching pattern is "api error 400"
     // which comes from the OpenAI-compat provider's error formatting, not
     // a bare "400" which is deliberately non-retryable for validation errors.
-    || msg.includes('api error 400')
+    // However, REQUEST-level validation errors (bad parameter combinations
+    // like tool_choice without tools) are universal — every provider rejects
+    // them — so we exclude those to avoid burning the whole fallback chain
+    // AND setting a cooldown on a key that did nothing wrong.
+    || (msg.includes('api error 400') && !isRequestValidationError(err))
     // 402: this provider/key is out of credits (e.g. HuggingFace Router
     // "API error 402: Payment required"). The SAME model often lives on another
     // provider (Kimi K2.6 is on HF + Cloudflare + NVIDIA), so fail over instead
@@ -104,4 +108,28 @@ export function isModelAccessForbiddenError(err: any): boolean {
   if (err?.status === 403) return true;
   const msg = (err?.message ?? '').toLowerCase();
   return msg.includes('403') || msg.includes('forbidden');
+}
+
+// A 400 that is a REQUEST-level validation error — every provider would reject it
+// identically, so failing over to another model is pointless. These must be
+// returned to the caller immediately (as 400) instead of burning through the
+// whole fallback chain and setting cooldowns on keys that did nothing wrong.
+//
+// The existing "api error 400" rule was added for cases where one provider
+// rejects parameters another accepts (e.g. max_tokens limits, unsupported tool
+// schemas). But 400s from structural validation errors (missing required fields,
+// invalid parameter combinations) are universal — no provider will accept a
+// request with `tool_choice` but no `tools`.
+export function isRequestValidationError(err: any): boolean {
+  const msg = (err.message ?? '').toLowerCase();
+  // Normalize markdown backticks that some providers wrap around parameter names
+  // (e.g. "`tool_choice`", "`tools`") so substring matching works cleanly.
+  const clean = msg.replace(/`/g, '');
+  // tool_choice without tools — a parameter-structure error, not a provider
+  // compatibility issue.
+  if (clean.includes('tool_choice') && clean.includes('tools must be set')) return true;
+  // Pydantic-style validation errors from OpenAI-compat providers (e.g.
+  // "1 validation error\n {'type': 'value_error', ...}")
+  if (clean.includes('validation error') && clean.includes('value_error')) return true;
+  return false;
 }

@@ -20,6 +20,7 @@ import {
   isPaymentRequiredError,
   isModelNotFoundError,
   isModelAccessForbiddenError,
+  isRequestValidationError,
   timingSafeStringEqual,
   extractApiToken,
   getRequestGroupId,
@@ -774,7 +775,9 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         continue;
       }
 
-      res.status(502).json({ error: { message: `Provider error (${route.displayName}): ${safeError}`, type: 'provider_error' } });
+      const nonRetryStatus = isRequestValidationError(err) ? 400 : 502;
+      const nonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'provider_error';
+      res.status(nonRetryStatus).json({ error: { message: `Provider error (${route.displayName}): ${safeError}`, type: nonRetryType } });
       return;
     }
   }

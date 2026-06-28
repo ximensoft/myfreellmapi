@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { connectDb } from '../../../db/index.js';
 import { getMigrationStatuses, runMigrations } from '../../../db/migrate/runner.js';
 import { up as runLegacyBaseline } from '../../../db/migrations/20260101_000000_legacy_baseline.js';
-
-const LEGACY_BASELINE_FILENAME = '20260101_000000_legacy_baseline.ts';
-const CUSTOM_PROVIDER_MODALITIES_FILENAME = '20260627_000001_custom_provider_modalities.ts';
-const CATALOG_MODEL_STATE_FILENAME = '20260627_000002_catalog_model_state.ts';
+import {
+  LEGACY_BASELINE_FILENAME,
+  CUSTOM_PROVIDER_MODALITIES_FILENAME,
+  CATALOG_MODEL_STATE_FILENAME,
+  SYNC_CUSTOM_MODELS_TO_PROFILES_FILENAME,
+  CUSTOM_PROVIDER_NAME_FILENAME,
+} from '../../../db/migrate/defaults.js';
 
 interface SchemaRow {
   type: string;
@@ -60,6 +63,8 @@ describe('migration round trip', () => {
         LEGACY_BASELINE_FILENAME,
         CUSTOM_PROVIDER_MODALITIES_FILENAME,
         CATALOG_MODEL_STATE_FILENAME,
+        SYNC_CUSTOM_MODELS_TO_PROFILES_FILENAME,
+        CUSTOM_PROVIDER_NAME_FILENAME,
       ]);
     } finally {
       db.close();

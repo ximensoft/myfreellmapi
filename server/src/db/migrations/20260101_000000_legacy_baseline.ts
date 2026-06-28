@@ -230,8 +230,6 @@ function createTables(db: Database.Database) {
   ensureRequestRequestedModelColumn(db);
   ensureApiKeysIsCustomColumn(db);
   ensureModelsIsCustomColumn(db);
-  ensureEmbeddingModelsIsCustomColumn(db);
-  ensureMediaModelsIsCustomColumn(db);
 }
 
 // `requested_model` is the model id the CLIENT pinned in the request body.
@@ -2020,6 +2018,8 @@ function migrateEmbeddingsV1(db: Database.Database) {
     );
   `);
 
+  ensureEmbeddingModelsIsCustomColumn(db);
+
   // Tag request rows so embeddings traffic doesn't pollute the chat token
   // budget / headroom math. Existing rows backfill to 'chat' via the default.
   const columns = db.prepare('PRAGMA table_info(requests)').all() as { name: string }[];
@@ -2085,6 +2085,8 @@ function migrateMediaV1(db: Database.Database) {
       UNIQUE(platform, model_id)
     );
   `);
+
+  ensureMediaModelsIsCustomColumn(db);
 }
 
 /**

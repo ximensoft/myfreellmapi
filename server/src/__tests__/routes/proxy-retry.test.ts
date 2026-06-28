@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError } from '../../routes/proxy.js';
+import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError, isRequestValidationError } from '../../routes/proxy.js';
 
 describe('isModelAccessForbiddenError (403 model-not-on-tier, drives whole-model skip — issue #256)', () => {
   it('flags a 403 reaching the proxy by message or attached status', () => {
@@ -88,6 +88,17 @@ describe('isRetryableError', () => {
     it('but a bare validation "400 Bad Request" (our own schema) is still NOT retryable', () => {
       expect(isRetryableError(new Error('400 Bad Request'))).toBe(false);
     });
+
+    it('request-level validation 400s (bad param combos) are NOT retryable — every provider would reject them', () => {
+      // tool_choice without tools — universal rejection, not a provider compatibility issue
+      expect(isRetryableError(new Error(
+        'agnes2 API error 400: BadRequestError: OpenAIException - {"error":{"message":"1 validation error:\\n {\'type\': \'value_error\', \'loc\': (\'body\',), \'msg\': \'Value error, When using `tool_choice`, `tools` must be set.\'}}',
+      ))).toBe(false);
+      // Pydantic-style validation error
+      expect(isRetryableError(new Error(
+        'SomeProvider API error 400: 1 validation error\\n {\'type\': \'value_error\', \'loc\': (\'body\',), \'msg\': \'bad input\'}',
+      ))).toBe(false);
+    });
   });
 
   describe('403 model not on this key\'s tier fails over instead of 502 (issue #256)', () => {
@@ -153,6 +164,30 @@ describe('isRetryableError', () => {
       // every provider identically, so aborting the request is the correct behavior.
       expect(isRetryableError(Object.assign(new Error('Bad Request'), { status: 400 }))).toBe(false);
       expect(isRetryableError(Object.assign(new Error('Unauthorized'), { status: 401 }))).toBe(false);
+    });
+  });
+
+  describe('isRequestValidationError', () => {
+    it('detects tool_choice without tools errors', () => {
+      expect(isRequestValidationError(new Error(
+        'agnes2 API error 400: BadRequestError: When using `tool_choice`, `tools` must be set.',
+      ))).toBe(true);
+    });
+
+    it('detects Pydantic-style validation errors', () => {
+      expect(isRequestValidationError(new Error(
+        'Provider API error 400: 1 validation error\\n {\'type\': \'value_error\', \'loc\': (\'body\',), \'msg\': \'bad\'}',
+      ))).toBe(true);
+    });
+
+    it('does not flag provider-specific 400s (one provider rejecting params another accepts)', () => {
+      expect(isRequestValidationError(new Error('Groq API error 400: Failed to call a function.'))).toBe(false);
+      expect(isRequestValidationError(new Error('Cerebras API error 400: tool schema not supported'))).toBe(false);
+    });
+
+    it('does not flag non-400 errors', () => {
+      expect(isRequestValidationError(new Error('429 Too Many Requests'))).toBe(false);
+      expect(isRequestValidationError(new Error('401 Unauthorized'))).toBe(false);
     });
   });
 

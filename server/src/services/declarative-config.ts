@@ -37,7 +37,7 @@ const keySchema = z.object({
 });
 
 const customProviderSchema = z.object({
-  name: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores'),
+  name: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores').default('custom'),
   baseUrl: z.string().url(),
   apiKey: z.string().optional(),
   label: z.string().optional(),

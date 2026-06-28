@@ -37,6 +37,7 @@ export function up(db: Database.Database): void {
 
   console.log(`[migration:sync-custom-profiles] profiles=${profiles.length}, fallback_rows=${fallbackRows.length}`);
 
+  const insertedIds: number[] = [];
   let totalInserted = 0;
   for (const profile of profiles) {
     let nextPriority = (getMaxPriority.get(profile.id) as { m: number }).m + 1;
@@ -44,7 +45,8 @@ export function up(db: Database.Database): void {
     for (const row of fallbackRows) {
       const exists = hasProfileModel.get(profile.id, row.model_db_id);
       if (!exists) {
-        insertProfileModel.run(profile.id, row.model_db_id, nextPriority, row.enabled);
+        const info = insertProfileModel.run(profile.id, row.model_db_id, nextPriority, row.enabled);
+        insertedIds.push(Number(info.lastInsertRowid));
         nextPriority++;
         profileInserted++;
       }
@@ -52,6 +54,10 @@ export function up(db: Database.Database): void {
     totalInserted += profileInserted;
     console.log(`[migration:sync-custom-profiles] profile_id=${profile.id}: inserted ${profileInserted} missing model(s)`);
   }
+
+  // Persist the IDs we inserted so down() can remove exactly those rows.
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('sync_custom_models_inserted_ids', ?)")
+    .run(JSON.stringify(insertedIds));
 
   // Also log custom-specific stats
   const customInFc = db.prepare(
@@ -63,7 +69,19 @@ export function up(db: Database.Database): void {
   console.log(`[migration:sync-custom-profiles] done. total_inserted=${totalInserted}, custom_in_fallback=${customInFc.cnt}, custom_in_profiles=${customInPm.cnt}`);
 }
 
-export function down(_db: Database.Database): void {
-  // No-op: removing profile_models entries would lose user customizations.
-  // The up migration only adds missing rows, which is safe to leave in place.
+export function down(db: Database.Database): void {
+  // Remove exactly the rows this migration inserted (tracked in settings).
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'sync_custom_models_inserted_ids'").get() as { value: string } | undefined;
+  if (row) {
+    try {
+      const ids = JSON.parse(row.value) as number[];
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        db.prepare(`DELETE FROM profile_models WHERE id IN (${placeholders})`).run(...ids);
+      }
+    } catch { /* ignore malformed JSON */ }
+    db.prepare("DELETE FROM settings WHERE key = 'sync_custom_models_inserted_ids'").run();
+    // Reset the auto-increment counter so re-running up() produces the same IDs.
+    db.prepare("DELETE FROM sqlite_sequence WHERE name = 'profile_models'").run();
+  }
 }

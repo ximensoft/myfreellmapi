@@ -62,7 +62,7 @@ embeddingsRouter.get('/', (_req: Request, res: Response) => {
 });
 
 const customEmbeddingSchema = z.object({
-  providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores'),
+  providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores').default('custom'),
   baseUrl: z.string().url('baseUrl must be a valid URL'),
   model: z.string().min(1),
   displayName: z.string().optional(),

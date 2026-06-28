@@ -279,15 +279,11 @@ register(new OpenAICompatProvider({
 register(new AIHordeProvider());
 
 // Legacy: 'custom' used to be the fixed platform for all user-added endpoints.
-// Now custom providers use user-defined platform names, but we keep a 'custom'
-// placeholder for backward compatibility with old DB rows that still have
-// platform = 'custom'. The real instance is built per-key by resolveProvider(),
-// since a custom provider's base URL is user-supplied and lives on the api_keys row.
-register(new OpenAICompatProvider({
-  platform: 'custom',
-  name: 'Custom (OpenAI-compatible)',
-  baseUrl: '',
-}));
+// Now custom providers use user-defined platform names, and 'custom' is treated
+// like any other non-built-in platform by resolveProvider(), which builds a
+// fresh OpenAICompatProvider using the base_url stored on the api_keys row.
+// Do NOT register a 'custom' placeholder here — it would shadow the per-key
+// resolution and always return an empty baseUrl.
 
 // Locally-hosted inference (llama.cpp / vLLM / Ollama on CPU) can be slow, so
 // custom providers get the same extended timeout as Ollama Cloud.
