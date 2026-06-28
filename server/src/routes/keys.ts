@@ -280,6 +280,19 @@ keysRouter.post('/custom', (req: Request, res: Response) => {
         db.prepare('INSERT INTO fallback_config (model_db_id, priority, enabled) VALUES (?, ?, 1)').run(modelRow.id, max.m + 1);
       }
 
+      // Also add to every profile's profile_models so the custom model is
+      // visible when an active profile is in use (getActiveChain reads from
+      // profile_models, not fallback_config — missing rows mean the model is
+      // invisible to the router).
+      const profiles = db.prepare('SELECT id FROM profiles').all() as { id: number }[];
+      for (const profile of profiles) {
+        const inProfile = db.prepare('SELECT 1 FROM profile_models WHERE profile_id = ? AND model_db_id = ?').get(profile.id, modelRow.id);
+        if (!inProfile) {
+          const maxP = db.prepare('SELECT COALESCE(MAX(priority), 0) AS m FROM profile_models WHERE profile_id = ?').get(profile.id) as { m: number };
+          db.prepare('INSERT INTO profile_models (profile_id, model_db_id, priority, enabled) VALUES (?, ?, ?, 1)').run(profile.id, modelRow.id, maxP.m + 1);
+        }
+      }
+
       registered.push({ modelDbId: modelRow.id, model: modelId, displayName });
     }
 
@@ -327,16 +340,23 @@ keysRouter.delete('/:id', (req: Request, res: Response) => {
     // so they never linger in the fallback chain forever (#189).
     if (row.platform === 'custom') {
       const defaultEmbedding = db.prepare("SELECT value FROM settings WHERE key = 'embeddings_default_family'").get() as { value: string } | undefined;
+      // Collect model db ids before deleting so profile_models can be cleaned up too.
+      const customModelIds = db.prepare("SELECT id FROM models WHERE platform = 'custom' AND key_id = ?").all(id) as { id: number }[];
       db.prepare("DELETE FROM fallback_config WHERE model_db_id IN (SELECT id FROM models WHERE platform = 'custom' AND key_id = ?)").run(id);
       db.prepare("DELETE FROM models WHERE platform = 'custom' AND key_id = ?").run(id);
       db.prepare("DELETE FROM embedding_models WHERE platform = 'custom' AND key_id = ?").run(id);
       db.prepare("DELETE FROM media_models WHERE platform = 'custom' AND key_id = ?").run(id);
+      // Remove from all profiles' profile_models as well.
+      const deleteFromProfile = db.prepare('DELETE FROM profile_models WHERE model_db_id = ?');
+      for (const m of customModelIds) deleteFromProfile.run(m.id);
       const remaining = db.prepare("SELECT COUNT(*) AS n FROM api_keys WHERE platform = 'custom'").get() as { n: number };
       if (remaining.n === 0) {
+        const allCustomModelIds = db.prepare("SELECT id FROM models WHERE platform = 'custom'").all() as { id: number }[];
         db.prepare("DELETE FROM fallback_config WHERE model_db_id IN (SELECT id FROM models WHERE platform = 'custom')").run();
         db.prepare("DELETE FROM models WHERE platform = 'custom'").run();
         db.prepare("DELETE FROM embedding_models WHERE platform = 'custom'").run();
         db.prepare("DELETE FROM media_models WHERE platform = 'custom'").run();
+        for (const m of allCustomModelIds) deleteFromProfile.run(m.id);
       }
       if (defaultEmbedding) {
         const stillExists = db.prepare('SELECT 1 FROM embedding_models WHERE family = ? LIMIT 1').get(defaultEmbedding.value);

@@ -183,11 +183,28 @@ function ensureFallbackRow(db: Database.Database, modelDbId: number, enabled = t
     if (updateExisting) {
       db.prepare('UPDATE fallback_config SET enabled = ? WHERE model_db_id = ?').run(enabled ? 1 : 0, modelDbId);
     }
-    return;
+  } else {
+    const max = db.prepare('SELECT COALESCE(MAX(priority), 0) AS m FROM fallback_config').get() as { m: number };
+    db.prepare('INSERT INTO fallback_config (model_db_id, priority, enabled) VALUES (?, ?, ?)')
+      .run(modelDbId, max.m + 1, enabled ? 1 : 0);
   }
-  const max = db.prepare('SELECT COALESCE(MAX(priority), 0) AS m FROM fallback_config').get() as { m: number };
-  db.prepare('INSERT INTO fallback_config (model_db_id, priority, enabled) VALUES (?, ?, ?)')
-    .run(modelDbId, max.m + 1, enabled ? 1 : 0);
+
+  // Also sync to every profile's profile_models so the model is visible when
+  // an active profile is in use (getActiveChain reads profile_models, not
+  // fallback_config — missing rows mean the model is invisible to the router).
+  const profiles = db.prepare('SELECT id FROM profiles').all() as { id: number }[];
+  for (const profile of profiles) {
+    const inProfile = db.prepare('SELECT 1 FROM profile_models WHERE profile_id = ? AND model_db_id = ?').get(profile.id, modelDbId);
+    if (inProfile) {
+      if (updateExisting) {
+        db.prepare('UPDATE profile_models SET enabled = ? WHERE profile_id = ? AND model_db_id = ?').run(enabled ? 1 : 0, profile.id, modelDbId);
+      }
+    } else {
+      const maxP = db.prepare('SELECT COALESCE(MAX(priority), 0) AS m FROM profile_models WHERE profile_id = ?').get(profile.id) as { m: number };
+      db.prepare('INSERT INTO profile_models (profile_id, model_db_id, priority, enabled) VALUES (?, ?, ?, ?)')
+        .run(profile.id, modelDbId, maxP.m + 1, enabled ? 1 : 0);
+    }
+  }
 }
 
 function registerCustomProvider(db: Database.Database, input: z.infer<typeof customProviderSchema>): number {

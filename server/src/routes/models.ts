@@ -80,6 +80,7 @@ modelsRouter.delete('/custom/:id', (req: Request, res: Response) => {
 
   const remove = db.transaction(() => {
     db.prepare('DELETE FROM fallback_config WHERE model_db_id = ?').run(id);
+    db.prepare('DELETE FROM profile_models WHERE model_db_id = ?').run(id);
     db.prepare("DELETE FROM models WHERE id = ? AND platform = 'custom'").run(id);
     deleteUnusedCustomEndpointKey(db, row.key_id);
   });
