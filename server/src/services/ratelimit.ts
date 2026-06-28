@@ -284,9 +284,7 @@ const cooldownHits = new Map<string, number[]>(); // key -> timestamps of recent
 const HOUR = 60 * MINUTE;
 const COOLDOWN_DURATIONS = [
   2 * MINUTE,   // 1st hit in 24h
-  10 * MINUTE,  // 2nd
-  HOUR,         // 3rd
-  DAY,          // 4th and beyond
+  5 * MINUTE,   // 2nd and beyond — stay at 5 min instead of escalating to hours/days
 ];
 
 export function getNextCooldownDuration(platform: string, modelId: string, keyId: number): number {
