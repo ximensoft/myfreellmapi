@@ -3,7 +3,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { ChatMessage, ChatToolCall, ModelListRow } from '@freellmapi/shared/types.js';
-import { routeRequest, resolveRoutingChain, resolveModelGroupCandidates, recordRateLimitHit, recordSuccess, hasEnabledVisionModel, hasEnabledToolsModel, type RouteResult, type ResolvedChain, type ChainRow } from '../services/router.js';
+import { routeRequest, resolveRoutingChain, resolveModelGroupCandidates, recordRateLimitHit, recordSuccess, hasEnabledVisionModel, hasEnabledToolsModel, getRoutingStrategy, type RouteResult, type ResolvedChain, type ChainRow } from '../services/router.js';
 import { recordRequest, recordTokens, setCooldown, getCooldownDurationForLimit, PAYMENT_REQUIRED_COOLDOWN_MS, MODEL_FORBIDDEN_COOLDOWN_MS, learnLimitFromError } from '../services/ratelimit.js';
 import { runEmbeddings, EmbeddingsError } from '../services/embeddings.js';
 import { runImageGeneration, runSpeech, MediaError } from '../services/media.js';
@@ -98,6 +98,7 @@ export function traceRouteEvent(
     platform: string;
     model: string;
     requestedModel?: string;
+    strategy?: string;
     latencyMs?: number;
     inputTokens?: number;
     outputTokens?: number;
@@ -114,6 +115,7 @@ export function traceRouteEvent(
     '-',
     opts.model,
   ];
+  if (opts.strategy) parts.push(`strat=${opts.strategy}`);
   if (opts.requestedModel) parts.push(`req=${opts.requestedModel}`);
   if (opts.latencyMs != null) parts.push(`lat=${opts.latencyMs}ms`);
   if (opts.inputTokens != null) parts.push(`in=${opts.inputTokens}`);
@@ -635,8 +637,10 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
   const estimatedTotal = estimatedInputTokens + max_tokens;
 
   let resolvedChain: ResolvedChain | undefined;
+  let strategyKey: string | undefined;
   if (isAutoModel(requestedModel)) {
     resolvedChain = resolveRoutingChain(requestedModel);
+    strategyKey = resolvedChain.strategyKey;
   }
 
   let preferredModel: number | undefined;
@@ -732,6 +736,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
       platform: route.platform,
       model: route.modelId,
       requestedModel: attempt === 0 ? requestedModelLabel : undefined,
+      strategy: attempt === 0 ? getRoutingStrategy() : undefined,
     });
 
     try {
@@ -1369,6 +1374,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
       platform: route.platform,
       model: route.modelId,
       requestedModel: attempt === 0 ? requestedModelLabel : undefined,
+      strategy: attempt === 0 ? getRoutingStrategy() : undefined,
     });
     let outboundMessages = messages;
     // Extra input tokens the injected handoff adds on this turn (0 when not

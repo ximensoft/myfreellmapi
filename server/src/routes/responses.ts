@@ -9,7 +9,7 @@ import type {
   ChatToolChoice,
   Platform,
 } from '@freellmapi/shared/types.js';
-import { routeRequest, recordRateLimitHit, recordSuccess, hasEnabledToolsModel, type RouteResult } from '../services/router.js';
+import { routeRequest, recordRateLimitHit, recordSuccess, hasEnabledToolsModel, getRoutingStrategy, type RouteResult } from '../services/router.js';
 import { recordRequest, recordTokens, setCooldown, getCooldownDurationForLimit, PAYMENT_REQUIRED_COOLDOWN_MS, learnLimitFromError } from '../services/ratelimit.js';
 import { getUnifiedApiKey } from '../db/index.js';
 import { contentToString } from '../lib/content.js';
@@ -404,6 +404,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         platform: route.platform,
         model: route.modelId,
         requestedModel: attempt === 0 ? requestedModelLabel : undefined,
+        strategy: attempt === 0 ? getRoutingStrategy() : undefined,
       });
       if (stream) {
         let outputIndex = 0;

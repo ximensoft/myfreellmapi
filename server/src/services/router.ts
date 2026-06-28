@@ -427,6 +427,7 @@ const GLOBAL_SORT_ALIASES: Record<string, string> = {
 };
 
 function getActiveChain(db: Database): ChainRow[] {
+  const strategy = getRoutingStrategy();
   const activeProfileSetting = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
   if (activeProfileSetting) {
     const profileId = parseInt(activeProfileSetting.value, 10);
@@ -445,9 +446,9 @@ function getActiveChain(db: Database): ChainRow[] {
     // Debug: log whether custom models are present in the active profile chain
     const customInChain = chain.filter(e => e.is_custom === 1);
     if (customInChain.length > 0) {
-      console.log(`[router] getActiveChain: profile_id=${profileId}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
+      console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
     } else {
-      console.log(`[router] getActiveChain: profile_id=${profileId}, total=${chain.length}, custom=0 (no custom models in profile!)`);
+      console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=0 (no custom models in profile!)`);
       // Also check if custom models exist in fallback_config but are missing from profile_models
       const fcCustom = db.prepare(`
         SELECT m.model_id, m.key_id
@@ -474,7 +475,7 @@ function getActiveChain(db: Database): ChainRow[] {
     ORDER BY fc.priority ASC
   `).all() as ChainRow[];
 
-  console.log(`[router] getActiveChain: using fallback_config (no active profile), total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
+  console.log(`[router] getActiveChain: using fallback_config (no active profile), strategy=${strategy}, total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
 
   return fallbackChain;
 }
@@ -870,12 +871,17 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
 
   const sortedChain = orderChain(chain, strategy);
 
+  // Log the strategy and top-3 sorted models for debugging
+  const top3 = sortedChain.slice(0, 3).map((e, i) => `#${i + 1} ${e.platform}/${e.model_id}`).join(', ');
+  console.log(`[router] routeRequest: strategy=${strategy}, top3=[${top3}], sticky=${preferredModelDbId ?? 'none'}`);
+
   // Sticky session / Explicit pinning: move preferred model to front of chain
   if (preferredModelDbId) {
     const idx = sortedChain.findIndex(e => e.model_db_id === preferredModelDbId);
     if (idx >= 0) {
       if (idx > 0) {
         const [preferred] = sortedChain.splice(idx, 1);
+        console.log(`[router] routeRequest: sticky/pinned model ${preferred.platform}/${preferred.model_id} (rank ${idx + 1}→1, strategy=${strategy})`);
         sortedChain.unshift(preferred);
       }
     } else {
