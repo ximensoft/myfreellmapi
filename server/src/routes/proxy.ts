@@ -705,10 +705,17 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
           },
         });
       } else {
-        const disposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+        const rawDisposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+        // Only log models whose platform has at least one enabled key — models
+        // with no key configured are noise (the user knows they haven't added a
+        // key, and it swamps the useful diagnostics for models that *do* have keys
+        // but failed for other reasons like cooldowns or rate limits).
+        const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
+        const skipped = rawDisposition.length - disposition.length;
         console.warn(
           `[Proxy] legacy completions routing exhausted (no upstream tried) req=${shortRequestId(requestGroupId)} ` +
           `requested=${requestedModelLabel} candidates=${disposition.length}` +
+          (skipped ? ` (+${skipped} no key)` : '') +
           (disposition.length ? `:\n  ${disposition.join('\n  ')}` : ''),
         );
         res.status(err.status ?? 503).json({
@@ -1334,10 +1341,17 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         // upstream was tried, so this is the ONLY place the per-model disposition
         // is recorded. Without it a routing_error 429 is opaque — you can't tell a
         // genuinely dry pool from cooldowns/quota/context narrowing (issue _1).
-        const disposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+        const rawDisposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+        // Only log models whose platform has at least one enabled key — models
+        // with no key configured are noise (the user knows they haven't added a
+        // key, and it swamps the useful diagnostics for models that *do* have keys
+        // but failed for other reasons like cooldowns or rate limits).
+        const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
+        const skipped = rawDisposition.length - disposition.length;
         console.warn(
           `[Proxy] routing exhausted (no upstream tried) req=${shortRequestId(requestGroupId)} ` +
           `requested=${requestedModelLabel} candidates=${disposition.length}` +
+          (skipped ? ` (+${skipped} no key)` : '') +
           (disposition.length ? `:\n  ${disposition.join('\n  ')}` : ''),
         );
         res.status(err.status ?? 503).json({

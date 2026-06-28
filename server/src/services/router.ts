@@ -438,11 +438,29 @@ function getActiveChain(db: Database): ChainRow[] {
       WHERE pm.profile_id = ?
       ORDER BY pm.priority ASC
     `).all(profileId) as ChainRow[];
-    
+
+    // Debug: log whether custom models are present in the active profile chain
+    const customInChain = chain.filter(e => e.platform === 'custom');
+    if (customInChain.length > 0) {
+      console.log(`[router] getActiveChain: profile_id=${profileId}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
+    } else {
+      console.log(`[router] getActiveChain: profile_id=${profileId}, total=${chain.length}, custom=0 (no custom models in profile!)`);
+      // Also check if custom models exist in fallback_config but are missing from profile_models
+      const fcCustom = db.prepare(`
+        SELECT m.model_id, m.key_id
+        FROM fallback_config fc
+        JOIN models m ON m.id = fc.model_db_id
+        WHERE m.platform = 'custom' AND m.enabled = 1
+      `).all() as { model_id: string; key_id: number | null }[];
+      if (fcCustom.length > 0) {
+        console.log(`[router] WARNING: ${fcCustom.length} custom model(s) exist in fallback_config but NOT in profile_models: ${fcCustom.map(c => `${c.model_id}(key_id=${c.key_id})`).join(', ')}`);
+      }
+    }
+
     if (chain.length > 0) return chain;
   }
 
-  return db.prepare(`
+  const fallbackChain = db.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
@@ -452,6 +470,10 @@ function getActiveChain(db: Database): ChainRow[] {
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
     ORDER BY fc.priority ASC
   `).all() as ChainRow[];
+
+  console.log(`[router] getActiveChain: using fallback_config (no active profile), total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.platform === 'custom').length}`);
+
+  return fallbackChain;
 }
 
 function getChainByProfileName(db: Database, name: string): ChainRow[] | null {
@@ -564,6 +586,11 @@ function selectKeyForModel(entry: ChainRow, estimatedTokens: number, skipKeys?: 
     "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')"
   ).all(entry.platform) as KeyRow[];
   if (keys.length === 0) {
+    // Debug: for custom models, explain WHY no keys were found
+    if (entry.platform === 'custom') {
+      const allCustomKeys = db.prepare("SELECT id, enabled, status, base_url FROM api_keys WHERE platform = 'custom'").all() as { id: number; enabled: number; status: string; base_url: string | null }[];
+      console.log(`[router] selectKeyForModel: ${label} has key_id=${entry.key_id} but no enabled+healthy keys found. All custom keys: ${allCustomKeys.map(k => `#${k.id} enabled=${k.enabled} status=${k.status} url=${k.base_url}`).join('; ')}`);
+    }
     diag?.push(`${label}: no enabled+healthy key for platform`);
     return null;
   }

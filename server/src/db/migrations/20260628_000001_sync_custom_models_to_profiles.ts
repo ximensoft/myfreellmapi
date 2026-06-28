@@ -35,16 +35,32 @@ export function up(db: Database.Database): void {
     'SELECT model_db_id, priority, enabled FROM fallback_config ORDER BY priority ASC',
   ).all() as { model_db_id: number; priority: number; enabled: number }[];
 
+  console.log(`[migration:sync-custom-profiles] profiles=${profiles.length}, fallback_rows=${fallbackRows.length}`);
+
+  let totalInserted = 0;
   for (const profile of profiles) {
     let nextPriority = (getMaxPriority.get(profile.id) as { m: number }).m + 1;
+    let profileInserted = 0;
     for (const row of fallbackRows) {
       const exists = hasProfileModel.get(profile.id, row.model_db_id);
       if (!exists) {
         insertProfileModel.run(profile.id, row.model_db_id, nextPriority, row.enabled);
         nextPriority++;
+        profileInserted++;
       }
     }
+    totalInserted += profileInserted;
+    console.log(`[migration:sync-custom-profiles] profile_id=${profile.id}: inserted ${profileInserted} missing model(s)`);
   }
+
+  // Also log custom-specific stats
+  const customInFc = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM fallback_config fc JOIN models m ON m.id = fc.model_db_id WHERE m.platform = 'custom'",
+  ).get() as { cnt: number };
+  const customInPm = db.prepare(
+    "SELECT COUNT(*) AS cnt FROM profile_models pm JOIN models m ON m.id = pm.model_db_id WHERE m.platform = 'custom'",
+  ).get() as { cnt: number };
+  console.log(`[migration:sync-custom-profiles] done. total_inserted=${totalInserted}, custom_in_fallback=${customInFc.cnt}, custom_in_profiles=${customInPm.cnt}`);
 }
 
 export function down(_db: Database.Database): void {
