@@ -51,6 +51,16 @@ async function main() {
     }
   }
 
+  // Log sticky session and context handoff status at boot so operators can
+  // verify their env vars took effect.
+  {
+    const stickyRaw = process.env.FREELLMAPI_STICKY_SESSION?.trim().toLowerCase();
+    const stickyEnabled = !(stickyRaw === 'false' || stickyRaw === '0' || stickyRaw === 'off');
+    const handoffRaw = process.env.FREELLMAPI_CONTEXT_HANDOFF?.trim().toLowerCase();
+    console.log(`[boot] sticky session: ${stickyEnabled ? 'enabled (default)' : 'disabled (FREELLMAPI_STICKY_SESSION=false)'}`);
+    console.log(`[boot] context handoff: ${handoffRaw === 'on_model_switch' ? 'on_model_switch' : 'off (default)'}`);
+  }
+
   const app = createApp(config);
 
   const onReady = (host: string) => () => {

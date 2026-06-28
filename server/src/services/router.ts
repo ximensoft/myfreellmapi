@@ -871,17 +871,43 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
 
   const sortedChain = orderChain(chain, strategy);
 
-  // Log the strategy and top-3 sorted models for debugging
-  const top3 = sortedChain.slice(0, 3).map((e, i) => `#${i + 1} ${e.platform}/${e.model_id}`).join(', ');
-  console.log(`[router] routeRequest: strategy=${strategy}, top3=[${top3}], sticky=${preferredModelDbId ?? 'none'}`);
+  // Log the strategy and top-3 sorted models that actually have a usable key.
+  // Without this filter the top3 is dominated by catalog models the operator
+  // never added a key for — scoring high on speed/reliability priors but
+  // instantly rejected by selectKeyForModel. Batch-query the set of platforms
+  // (and custom key_ids) that have at least one enabled+healthy key so we only
+  // log models that could really be routed to.
+  const platformsWithKeys = new Set(
+    (db.prepare("SELECT DISTINCT platform FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown')").all() as { platform: string }[])
+      .map(r => r.platform),
+  );
+  const customKeyIdsWithAccess = new Set(
+    (db.prepare("SELECT id FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown') AND is_custom = 1").all() as { id: number }[])
+      .map(r => r.id),
+  );
+  const hasUsableKey = (e: ChainRow): boolean => {
+    if (e.is_custom === 1) return e.key_id != null && customKeyIdsWithAccess.has(e.key_id);
+    return platformsWithKeys.has(e.platform);
+  };
 
-  // Sticky session / Explicit pinning: move preferred model to front of chain
+  const usableTop3 = sortedChain.filter(hasUsableKey).slice(0, 3);
+  const top3Debug = usableTop3.length > 0
+    ? usableTop3.map((e, i) => `#${i + 1} ${e.platform}/${e.model_id}`).join(', ')
+    : 'none (no models with usable keys!)';
+  const stickyLabel = preferredModelDbId != null ? `model_db_id=${preferredModelDbId}` : 'off';
+  console.log(`[router] routeRequest: strategy=${strategy}, top3=[${top3Debug}], sticky=${stickyLabel}`);
+
+  // Sticky session / Explicit pinning: move preferred model to front of chain.
+  // This OVERRIDES the strategy ranking — a sticky model ranked #59 by the
+  // strategy will be jumped to #1. This is intentional (prevents mid-conversation
+  // model switching / hallucination) but can be surprising when the strategy is
+  // 'fastest' and the sticky model is slow. Disable via FREELLMAPI_STICKY_SESSION=false.
   if (preferredModelDbId) {
     const idx = sortedChain.findIndex(e => e.model_db_id === preferredModelDbId);
     if (idx >= 0) {
       if (idx > 0) {
         const [preferred] = sortedChain.splice(idx, 1);
-        console.log(`[router] routeRequest: sticky/pinned model ${preferred.platform}/${preferred.model_id} (rank ${idx + 1}→1, strategy=${strategy})`);
+        console.log(`[router] routeRequest: sticky/pinned model ${preferred.platform}/${preferred.model_id} (strategy rank #${idx + 1} → forced #1, strategy=${strategy})`);
         sortedChain.unshift(preferred);
       }
     } else {
