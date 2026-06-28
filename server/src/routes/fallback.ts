@@ -69,7 +69,7 @@ fallbackRouter.get('/', (_req: Request, res: Response) => {
            m.speed_rank, m.size_label, m.rpm_limit, m.rpd_limit,
            m.tpm_limit, m.tpd_limit, m.context_window,
            m.monthly_token_budget, m.supports_vision, m.supports_tools,
-           m.key_id, ak.label AS key_label,
+           m.key_id, m.is_custom, ak.label AS key_label,
            mo.overrides_json IS NOT NULL AS has_overrides
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
@@ -133,7 +133,7 @@ fallbackRouter.get('/', (_req: Request, res: Response) => {
       monthlyTokenBudgetTokens: parseBudget(r.monthly_token_budget),
       supportsVision: r.supports_vision === 1,
       supportsTools: r.supports_tools === 1,
-      source: r.platform === 'custom' || r.key_id != null ? 'custom' : 'catalog',
+      source: r.is_custom === 1 ? 'custom' : 'catalog',
       keyId: r.key_id ?? null,
       keyLabel: r.key_label ?? null,
       hasOverrides: Boolean(r.has_overrides),

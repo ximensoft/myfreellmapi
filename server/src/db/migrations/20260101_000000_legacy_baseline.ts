@@ -228,6 +228,10 @@ function createTables(db: Database.Database) {
   ensureModelsKeyIdColumn(db);
   ensureRequestTtfbColumn(db);
   ensureRequestRequestedModelColumn(db);
+  ensureApiKeysIsCustomColumn(db);
+  ensureModelsIsCustomColumn(db);
+  ensureEmbeddingModelsIsCustomColumn(db);
+  ensureMediaModelsIsCustomColumn(db);
 }
 
 // `requested_model` is the model id the CLIENT pinned in the request body.
@@ -266,6 +270,44 @@ function ensureApiKeysBaseUrlColumn(db: Database.Database) {
   if (!columns.some(col => col.name === 'base_url')) {
     db.prepare('ALTER TABLE api_keys ADD COLUMN base_url TEXT').run();
   }
+}
+
+// `is_custom` marks a key as belonging to a user-added OpenAI-compatible endpoint
+// (distinguished from built-in provider keys). 0 for every built-in platform.
+function ensureApiKeysIsCustomColumn(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[];
+  if (!columns.some(col => col.name === 'is_custom')) {
+    db.prepare('ALTER TABLE api_keys ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0').run();
+  }
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_api_keys_is_custom ON api_keys(is_custom)').run();
+}
+
+// `is_custom` marks a model as user-added (custom endpoint) rather than catalog.
+// 0 for every built-in/catalog model.
+function ensureModelsIsCustomColumn(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(models)').all() as { name: string }[];
+  if (!columns.some(col => col.name === 'is_custom')) {
+    db.prepare('ALTER TABLE models ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0').run();
+  }
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_models_is_custom ON models(is_custom)').run();
+}
+
+// `is_custom` for embedding_models — same semantics as models.is_custom.
+function ensureEmbeddingModelsIsCustomColumn(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(embedding_models)').all() as { name: string }[];
+  if (!columns.some(col => col.name === 'is_custom')) {
+    db.prepare('ALTER TABLE embedding_models ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0').run();
+  }
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_embedding_models_is_custom ON embedding_models(is_custom)').run();
+}
+
+// `is_custom` for media_models — same semantics as models.is_custom.
+function ensureMediaModelsIsCustomColumn(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(media_models)').all() as { name: string }[];
+  if (!columns.some(col => col.name === 'is_custom')) {
+    db.prepare('ALTER TABLE media_models ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0').run();
+  }
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_media_models_is_custom ON media_models(is_custom)').run();
 }
 
 // `key_id` binds a custom model to the api_keys row that carries ITS endpoint,

@@ -1,5 +1,5 @@
 import { getDb, getSetting, setSetting } from '../db/index.js';
-import { getProvider, hasProvider, resolveProvider } from '../providers/index.js';
+import { getProvider, hasProvider, resolveProvider, isCustomPlatform } from '../providers/index.js';
 import { decrypt } from '../lib/crypto.js';
 import { canMakeRequest, canUseTokens, isOnCooldown, canUseProvider } from './ratelimit.js';
 import {
@@ -37,6 +37,7 @@ interface KeyRow {
   status: string;
   enabled: number;
   base_url: string | null;
+  is_custom: number;
 }
 
 // Chain row joined with the model fields the bandit needs to score it.
@@ -60,6 +61,8 @@ export interface ChainRow {
   // Custom models bind to the api_keys row carrying their endpoint (#212);
   // NULL for built-in platforms.
   key_id: number | null;
+  // 1 for user-added custom models, 0 for catalog/built-in models.
+  is_custom: number;
 }
 
 export interface RouteResult {
@@ -432,7 +435,7 @@ function getActiveChain(db: Database): ChainRow[] {
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-             m.supports_tools, m.context_window, m.key_id
+             m.supports_tools, m.context_window, m.key_id, m.is_custom
       FROM profile_models pm
       JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
       WHERE pm.profile_id = ?
@@ -440,7 +443,7 @@ function getActiveChain(db: Database): ChainRow[] {
     `).all(profileId) as ChainRow[];
 
     // Debug: log whether custom models are present in the active profile chain
-    const customInChain = chain.filter(e => e.platform === 'custom');
+    const customInChain = chain.filter(e => e.is_custom === 1);
     if (customInChain.length > 0) {
       console.log(`[router] getActiveChain: profile_id=${profileId}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
     } else {
@@ -450,7 +453,7 @@ function getActiveChain(db: Database): ChainRow[] {
         SELECT m.model_id, m.key_id
         FROM fallback_config fc
         JOIN models m ON m.id = fc.model_db_id
-        WHERE m.platform = 'custom' AND m.enabled = 1
+        WHERE m.is_custom = 1 AND m.enabled = 1
       `).all() as { model_id: string; key_id: number | null }[];
       if (fcCustom.length > 0) {
         console.log(`[router] WARNING: ${fcCustom.length} custom model(s) exist in fallback_config but NOT in profile_models: ${fcCustom.map(c => `${c.model_id}(key_id=${c.key_id})`).join(', ')}`);
@@ -465,13 +468,13 @@ function getActiveChain(db: Database): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.supports_tools, m.context_window, m.key_id
+           m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
     ORDER BY fc.priority ASC
   `).all() as ChainRow[];
 
-  console.log(`[router] getActiveChain: using fallback_config (no active profile), total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.platform === 'custom').length}`);
+  console.log(`[router] getActiveChain: using fallback_config (no active profile), total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
 
   return fallbackChain;
 }
@@ -485,7 +488,7 @@ function getChainByProfileName(db: Database, name: string): ChainRow[] | null {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.supports_tools, m.context_window, m.key_id
+           m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM profile_models pm
     JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
     WHERE pm.profile_id = ?
@@ -499,7 +502,7 @@ function getChainByGlobalSort(db: Database, globalAxis: string): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.supports_tools, m.context_window, m.key_id
+           m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM models m
     WHERE m.enabled = 1
   `).all() as ChainRow[];
@@ -576,19 +579,20 @@ function selectKeyForModel(entry: ChainRow, estimatedTokens: number, skipKeys?: 
   const db = getDb();
   const label = `${entry.platform}/${entry.model_id}`;
 
-  if (!hasProvider(entry.platform as Platform)) {
+  const isCustom = isCustomPlatform(entry.platform);
+
+  if (!hasProvider(entry.platform as Platform) && !isCustom) {
     diag?.push(`${label}: no provider registered`);
     return null;
   }
-  const provider = getProvider(entry.platform as Platform)!;
 
   const keys = db.prepare(
     "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')"
   ).all(entry.platform) as KeyRow[];
   if (keys.length === 0) {
     // Debug: for custom models, explain WHY no keys were found
-    if (entry.platform === 'custom') {
-      const allCustomKeys = db.prepare("SELECT id, enabled, status, base_url FROM api_keys WHERE platform = 'custom'").all() as { id: number; enabled: number; status: string; base_url: string | null }[];
+    if (isCustom) {
+      const allCustomKeys = db.prepare('SELECT id, enabled, status, base_url FROM api_keys WHERE platform = ? AND is_custom = 1').all(entry.platform) as { id: number; enabled: number; status: string; base_url: string | null }[];
       console.log(`[router] selectKeyForModel: ${label} has key_id=${entry.key_id} but no enabled+healthy keys found. All custom keys: ${allCustomKeys.map(k => `#${k.id} enabled=${k.enabled} status=${k.status} url=${k.base_url}`).join('; ')}`);
     }
     diag?.push(`${label}: no enabled+healthy key for platform`);
@@ -616,7 +620,7 @@ function selectKeyForModel(entry: ChainRow, estimatedTokens: number, skipKeys?: 
 
     // A custom model belongs to exactly one endpoint (#212); legacy rows
     // (key_id NULL) keep the old any-key match.
-    if (entry.platform === 'custom' && entry.key_id != null && key.id !== entry.key_id) { note('custom-key-mismatch'); continue; }
+    if (isCustom && entry.key_id != null && key.id !== entry.key_id) { note('custom-key-mismatch'); continue; }
 
     const skipId = `${entry.platform}:${entry.model_id}:${key.id}`;
     if (skipKeys?.has(skipId)) { note('already-failed-this-request'); continue; }
@@ -636,9 +640,9 @@ function selectKeyForModel(entry: ChainRow, estimatedTokens: number, skipKeys?: 
       continue;
     }
 
-    const resolvedProvider = entry.platform === 'custom'
-      ? resolveProvider('custom', key.base_url)
-      : provider;
+    const resolvedProvider = isCustom
+      ? resolveProvider(entry.platform, key.base_url)
+      : getProvider(entry.platform as Platform)!;
     if (!resolvedProvider) { note('no-resolved-provider'); continue; }
 
     roundRobinIndex.set(rrKey, idx);
@@ -720,7 +724,7 @@ export function resolveModelGroupCandidates(memberDbIds: number[]): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.supports_tools, m.context_window, m.key_id
+           m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
     WHERE m.id = ? AND m.enabled = 1
@@ -883,7 +887,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
                m.platform, m.model_id, m.display_name, m.intelligence_rank,
                m.size_label, m.monthly_token_budget,
                m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-               m.supports_tools, m.context_window, m.key_id
+               m.supports_tools, m.context_window, m.key_id, m.is_custom
         FROM models m
         WHERE m.id = ? AND m.enabled = 1
       `).get(preferredModelDbId) as ChainRow | undefined;

@@ -51,6 +51,7 @@ type ModelRow = {
   platform: string;
   model_id: string;
   key_id: number | null;
+  is_custom: number;
 };
 
 function dbValue(key: keyof typeof MODEL_FIELD_COLUMNS, value: unknown): unknown {
@@ -60,7 +61,7 @@ function dbValue(key: keyof typeof MODEL_FIELD_COLUMNS, value: unknown): unknown
 
 function fetchModelRow(id: number): ModelRow | undefined {
   return getDb()
-    .prepare('SELECT id, platform, model_id, key_id FROM models WHERE id = ?')
+    .prepare('SELECT id, platform, model_id, key_id, is_custom FROM models WHERE id = ?')
     .get(id) as ModelRow | undefined;
 }
 
@@ -72,7 +73,7 @@ modelsRouter.delete('/custom/:id', (req: Request, res: Response) => {
   }
 
   const db = getDb();
-  const row = db.prepare("SELECT id, key_id FROM models WHERE id = ? AND platform = 'custom'").get(id) as { id: number; key_id: number | null } | undefined;
+  const row = db.prepare("SELECT id, key_id FROM models WHERE id = ? AND is_custom = 1").get(id) as { id: number; key_id: number | null } | undefined;
   if (!row) {
     res.status(404).json({ error: { message: `Unknown custom model ${id}` } });
     return;
@@ -81,7 +82,7 @@ modelsRouter.delete('/custom/:id', (req: Request, res: Response) => {
   const remove = db.transaction(() => {
     db.prepare('DELETE FROM fallback_config WHERE model_db_id = ?').run(id);
     db.prepare('DELETE FROM profile_models WHERE model_db_id = ?').run(id);
-    db.prepare("DELETE FROM models WHERE id = ? AND platform = 'custom'").run(id);
+    db.prepare('DELETE FROM models WHERE id = ? AND is_custom = 1').run(id);
     deleteUnusedCustomEndpointKey(db, row.key_id);
   });
   remove();
@@ -172,7 +173,7 @@ modelsRouter.delete('/:id', (req: Request, res: Response) => {
     }
     db.prepare('DELETE FROM fallback_config WHERE model_db_id = ?').run(id);
     db.prepare('DELETE FROM models WHERE id = ?').run(id);
-    if (row.platform === 'custom') deleteUnusedCustomEndpointKey(db, row.key_id);
+    if (row.is_custom === 1) deleteUnusedCustomEndpointKey(db, row.key_id);
   });
   remove();
 
@@ -222,7 +223,7 @@ modelsRouter.get('/', (_req: Request, res: Response) => {
     supportsTools: m.supports_tools === 1,
     priority: m.priority,
     fallbackEnabled: m.fallback_enabled === 1,
-    source: m.platform === 'custom' || m.key_id != null ? 'custom' : 'catalog',
+    source: m.is_custom === 1 ? 'custom' : 'catalog',
     keyId: m.key_id ?? null,
     keyLabel: m.key_label ?? null,
     hasOverrides: Boolean(m.has_overrides),

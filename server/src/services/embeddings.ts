@@ -23,6 +23,7 @@ export interface EmbeddingModelRow {
   enabled: number;
   quota_label: string;
   key_id: number | null;
+  is_custom: number;
 }
 
 export interface EmbeddingsResult {
@@ -84,7 +85,7 @@ function getProviderCredential(row: EmbeddingModelRow): ProviderCredential | nul
       return null;
     }
   }
-  if (row.platform === 'custom') return null;
+  if (row.is_custom === 1) return null;
 
   const keyRow = getDb().prepare(
     "SELECT id, encrypted_key, iv, auth_tag, base_url FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown') ORDER BY id LIMIT 1",

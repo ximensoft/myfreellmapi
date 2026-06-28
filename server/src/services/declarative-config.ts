@@ -37,6 +37,7 @@ const keySchema = z.object({
 });
 
 const customProviderSchema = z.object({
+  name: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores'),
   baseUrl: z.string().url(),
   apiKey: z.string().optional(),
   label: z.string().optional(),
@@ -127,18 +128,19 @@ function encryptedKey(raw: string) {
 function upsertApiKey(db: Database.Database, input: z.infer<typeof keySchema>): number {
   const platform = input.platform.trim();
   const enabled = input.enabled === false ? 0 : 1;
-  const isCustom = platform === 'custom';
+  const isCustom = !resolveProvider(platform as never);
   const baseUrl = input.baseUrl?.trim().replace(/\/+$/, '') ?? null;
+  if (isCustom && !baseUrl) throw new Error('baseUrl is required for custom keys');
+  if (isCustom && resolveProvider(platform as never)) throw new Error(`provider name '${platform}' collides with a built-in platform`);
   const provider = !isCustom ? resolveProvider(platform as never) : null;
   if (!isCustom && !provider) throw new Error(`unknown provider platform: ${platform}`);
   const keyToStore = input.key?.trim() || (provider?.keyless ? 'no-key' : '');
   if (!keyToStore) throw new Error(`key is required for ${platform}`);
-  const label = input.label?.trim() || (isCustom ? 'Custom' : 'env');
+  const label = input.label?.trim() || (isCustom ? platform : 'env');
   const key = encryptedKey(keyToStore);
 
   if (isCustom) {
-    if (!baseUrl) throw new Error('baseUrl is required for custom keys');
-    const existing = db.prepare("SELECT id FROM api_keys WHERE platform = 'custom' AND base_url = ?").get(baseUrl) as { id: number } | undefined;
+    const existing = db.prepare('SELECT id FROM api_keys WHERE platform = ? AND base_url = ? AND is_custom = 1').get(platform, baseUrl) as { id: number } | undefined;
     if (existing) {
       db.prepare(`
         UPDATE api_keys
@@ -148,9 +150,9 @@ function upsertApiKey(db: Database.Database, input: z.infer<typeof keySchema>): 
       return existing.id;
     }
     const inserted = db.prepare(`
-      INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url)
-      VALUES ('custom', ?, ?, ?, ?, 'unknown', ?, ?)
-    `).run(label, key.encrypted, key.iv, key.authTag, enabled, baseUrl);
+      INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url, is_custom)
+      VALUES (?, ?, ?, ?, ?, 'unknown', ?, ?, 1)
+    `).run(platform, label, key.encrypted, key.iv, key.authTag, enabled, baseUrl);
     return Number(inserted.lastInsertRowid);
   }
 
@@ -208,8 +210,9 @@ function ensureFallbackRow(db: Database.Database, modelDbId: number, enabled = t
 }
 
 function registerCustomProvider(db: Database.Database, input: z.infer<typeof customProviderSchema>): number {
+  const providerName = input.name.trim();
   const keyId = upsertApiKey(db, {
-    platform: 'custom',
+    platform: providerName,
     key: input.apiKey,
     label: input.label,
     baseUrl: input.baseUrl,
@@ -222,8 +225,8 @@ function registerCustomProvider(db: Database.Database, input: z.infer<typeof cus
       INSERT INTO models
         (platform, model_id, display_name, intelligence_rank, speed_rank, size_label,
          rpm_limit, rpd_limit, tpm_limit, tpd_limit, monthly_token_budget, context_window,
-         enabled, supports_vision, supports_tools, key_id)
-      VALUES ('custom', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, 1, ?, ?, ?)
+         enabled, supports_vision, supports_tools, key_id, is_custom)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, 1, ?, ?, ?, 1)
       ON CONFLICT(platform, model_id)
       DO UPDATE SET
         display_name = excluded.display_name,
@@ -237,6 +240,7 @@ function registerCustomProvider(db: Database.Database, input: z.infer<typeof cus
         key_id = excluded.key_id,
         enabled = 1
     `).run(
+      providerName,
       model.modelId,
       model.displayName,
       model.intelligenceRank ?? 50,
@@ -248,7 +252,7 @@ function registerCustomProvider(db: Database.Database, input: z.infer<typeof cus
       model.supportsTools ? 1 : 0,
       keyId,
     );
-    const row = db.prepare("SELECT id FROM models WHERE platform = 'custom' AND model_id = ?").get(model.modelId) as { id: number };
+    const row = db.prepare('SELECT id FROM models WHERE platform = ? AND model_id = ?').get(providerName, model.modelId) as { id: number };
     ensureFallbackRow(db, row.id, model.fallbackEnabled !== false);
     registered++;
   }

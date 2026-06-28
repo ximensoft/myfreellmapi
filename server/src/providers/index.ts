@@ -278,9 +278,11 @@ register(new OpenAICompatProvider({
 // priority); a registered aihorde.net key raises priority. See issue #345.
 register(new AIHordeProvider());
 
-// Placeholder so getProvider('custom')/hasProvider('custom')/getAllProviders()
-// behave — but the real instance is built per-key by resolveProvider(), since
-// a custom provider's base URL is user-supplied and lives on the api_keys row.
+// Legacy: 'custom' used to be the fixed platform for all user-added endpoints.
+// Now custom providers use user-defined platform names, but we keep a 'custom'
+// placeholder for backward compatibility with old DB rows that still have
+// platform = 'custom'. The real instance is built per-key by resolveProvider(),
+// since a custom provider's base URL is user-supplied and lives on the api_keys row.
 register(new OpenAICompatProvider({
   platform: 'custom',
   name: 'Custom (OpenAI-compatible)',
@@ -296,23 +298,37 @@ export function getProvider(platform: Platform): BaseProvider | undefined {
 }
 
 /**
- * Resolve the provider for a route. Built-in platforms return their registered
- * singleton; the 'custom' platform builds a fresh OpenAICompatProvider bound to
- * the caller-supplied base URL (stored per api_keys row). Returns undefined for
- * a custom provider with no base URL configured.
+ * Check whether a platform name belongs to a user-added custom provider
+ * (as opposed to a built-in catalog provider). Custom providers are not
+ * registered in the provider map — they are resolved dynamically by
+ * resolveProvider() using the base_url stored on the api_keys row.
  */
-export function resolveProvider(platform: Platform, baseUrl?: string | null): BaseProvider | undefined {
-  if (platform === 'custom') {
-    const trimmed = baseUrl?.trim();
-    if (!trimmed) return undefined;
-    return new OpenAICompatProvider({
-      platform: 'custom',
-      name: 'Custom (OpenAI-compatible)',
-      baseUrl: trimmed,
-      timeoutMs: CUSTOM_PROVIDER_TIMEOUT_MS,
-    });
-  }
-  return providers.get(platform);
+export function isCustomPlatform(platform: string): boolean {
+  return !providers.has(platform as Platform);
+}
+
+/**
+ * Resolve the provider for a route. Built-in platforms return their registered
+ * singleton; any platform NOT in the built-in map (including the legacy
+ * 'custom') builds a fresh OpenAICompatProvider bound to the caller-supplied
+ * base URL (stored per api_keys row). Returns undefined for a custom provider
+ * with no base URL configured.
+ */
+export function resolveProvider(platform: Platform | string, baseUrl?: string | null): BaseProvider | undefined {
+  const builtin = providers.get(platform as Platform);
+  if (builtin) return builtin;
+
+  // Not a built-in provider → treat as a custom endpoint.
+  // The platform string is the user-chosen provider name (or 'custom' for
+  // legacy rows). baseUrl is mandatory for custom providers.
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) return undefined;
+  return new OpenAICompatProvider({
+    platform: platform as Platform,
+    name: `${platform}`,
+    baseUrl: trimmed,
+    timeoutMs: CUSTOM_PROVIDER_TIMEOUT_MS,
+  });
 }
 
 export function getAllProviders(): BaseProvider[] {

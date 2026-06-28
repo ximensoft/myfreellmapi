@@ -62,7 +62,13 @@ export type Platform =
   | 'aihorde'
   // User-configured OpenAI-compatible endpoint (llama.cpp, LM Studio, vLLM,
   // Ollama, any base_url). The endpoint URL lives on the api_keys row; see #117.
-  | 'custom';
+  // Legacy: all custom endpoints used platform = 'custom'. New custom endpoints
+  // use user-chosen platform names (e.g. 'my-deepseek'), but 'custom' is still
+  // valid for backward compatibility.
+  | 'custom'
+  // Any user-defined provider name for custom OpenAI-compatible endpoints.
+  // The string must not collide with a built-in platform name.
+  | (string & {});
 
 export interface Model {
   id: number;
@@ -134,6 +140,7 @@ export interface ApiKey {
   baseUrl: string | null;
   status: KeyStatus;
   enabled: boolean;
+  isCustom: boolean;
   createdAt: string;
   lastCheckedAt: string | null;
   models?: ApiKeyModel[];

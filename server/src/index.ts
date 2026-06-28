@@ -39,10 +39,10 @@ async function main() {
   {
     const db = getDb();
     const customInFc = db.prepare(
-      "SELECT COUNT(*) AS cnt FROM fallback_config fc JOIN models m ON m.id = fc.model_db_id WHERE m.platform = 'custom' AND m.enabled = 1",
+      'SELECT COUNT(*) AS cnt FROM fallback_config fc JOIN models m ON m.id = fc.model_db_id WHERE m.is_custom = 1 AND m.enabled = 1',
     ).get() as { cnt: number };
     const customInPm = db.prepare(
-      "SELECT COUNT(*) AS cnt FROM profile_models pm JOIN models m ON m.id = pm.model_db_id WHERE m.platform = 'custom' AND m.enabled = 1",
+      'SELECT COUNT(*) AS cnt FROM profile_models pm JOIN models m ON m.id = pm.model_db_id WHERE m.is_custom = 1 AND m.enabled = 1',
     ).get() as { cnt: number };
     const ap = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
     console.log(`[boot] custom models — fallback_config: ${customInFc.cnt}, profile_models: ${customInPm.cnt}, active_profile_id: ${ap?.value ?? 'none'}`);

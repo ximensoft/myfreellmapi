@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
+import { hasProvider } from '../providers/index.js';
 import { deleteUnusedCustomEndpointKey } from '../lib/custom-provider-cleanup.js';
 import { listAllMediaModels } from '../services/media.js';
 
@@ -20,7 +21,7 @@ mediaRouter.get('/', (_req: Request, res: Response) => {
   );
   const customKeyIds = new Set(
     (db.prepare(
-      "SELECT id FROM api_keys WHERE platform = 'custom' AND enabled = 1 AND status IN ('healthy', 'unknown')",
+      "SELECT id FROM api_keys WHERE is_custom = 1 AND enabled = 1 AND status IN ('healthy', 'unknown')",
     ).all() as { id: number }[]).map(r => r.id),
   );
 
@@ -33,15 +34,16 @@ mediaRouter.get('/', (_req: Request, res: Response) => {
       modality: r.modality,
       enabled: r.enabled === 1,
       quotaLabel: r.quota_label,
-      keyCount: r.platform === 'custom' && r.key_id != null
+      keyCount: r.is_custom === 1 && r.key_id != null
         ? (customKeyIds.has(r.key_id) ? 1 : 0)
         : keyCounts.get(r.platform) ?? 0,
-      isCustom: r.platform === 'custom',
+      isCustom: r.is_custom === 1,
     })),
   });
 });
 
 const customMediaSchema = z.object({
+  providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores'),
   baseUrl: z.string().url('baseUrl must be a valid URL'),
   model: z.string().min(1),
   displayName: z.string().optional(),
@@ -59,6 +61,12 @@ mediaRouter.post('/custom', (req: Request, res: Response) => {
   }
 
   const db = getDb();
+  const providerName = parsed.data.providerName.trim();
+  // Validate: provider name must not collide with a built-in platform
+  if (hasProvider(providerName)) {
+    res.status(400).json({ error: { message: `Provider name '${providerName}' is reserved for built-in platform. Choose a different name.` } });
+    return;
+  }
   const baseUrl = parsed.data.baseUrl.trim().replace(/\/+$/, '');
   const modelId = parsed.data.model.trim();
   if (!modelId) {
@@ -74,9 +82,9 @@ mediaRouter.post('/custom', (req: Request, res: Response) => {
     const existingKey = db.prepare(`
       SELECT id, encrypted_key, iv, auth_tag
         FROM api_keys
-       WHERE platform = 'custom' AND base_url = ?
+       WHERE platform = ? AND base_url = ? AND is_custom = 1
        LIMIT 1
-    `).get(baseUrl) as { id: number; encrypted_key: string; iv: string; auth_tag: string } | undefined;
+    `).get(providerName, baseUrl) as { id: number; encrypted_key: string; iv: string; auth_tag: string } | undefined;
     let keyId: number;
     let storedKeyForMask = providedKey ?? 'no-key';
     if (existingKey) {
@@ -109,16 +117,16 @@ mediaRouter.post('/custom', (req: Request, res: Response) => {
     } else {
       const { encrypted, iv, authTag } = encrypt(providedKey ?? 'no-key');
       const key = db.prepare(`
-        INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url)
-        VALUES ('custom', ?, ?, ?, ?, 'unknown', 1, ?)
-      `).run(label ?? 'Custom', encrypted, iv, authTag, baseUrl);
+        INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url, is_custom)
+        VALUES (?, ?, ?, ?, ?, 'unknown', 1, ?, 1)
+      `).run(providerName, label ?? providerName, encrypted, iv, authTag, baseUrl);
       keyId = Number(key.lastInsertRowid);
     }
 
     const existingModel = db.prepare(`
       SELECT id, modality, priority
         FROM media_models
-       WHERE platform = 'custom' AND model_id = ?
+       WHERE is_custom = 1 AND model_id = ?
        LIMIT 1
     `).get(modelId) as { id: number; modality: string; priority: number } | undefined;
     const priority = existingModel && existingModel.modality === parsed.data.modality
@@ -142,9 +150,9 @@ mediaRouter.post('/custom', (req: Request, res: Response) => {
 
     const model = db.prepare(`
       INSERT INTO media_models
-        (platform, model_id, display_name, modality, priority, enabled, quota_label, key_id)
-      VALUES ('custom', ?, ?, ?, ?, 1, ?, ?)
-    `).run(modelId, displayName, parsed.data.modality, priority, quotaLabel, keyId);
+        (platform, model_id, display_name, modality, priority, enabled, quota_label, key_id, is_custom)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1)
+    `).run(providerName, modelId, displayName, parsed.data.modality, priority, quotaLabel, keyId);
     return { modelDbId: Number(model.lastInsertRowid), keyId, storedKeyForMask };
   });
 
@@ -153,7 +161,7 @@ mediaRouter.post('/custom', (req: Request, res: Response) => {
     success: true,
     keyId: result.keyId,
     modelDbId: result.modelDbId,
-    platform: 'custom',
+    platform: providerName,
     baseUrl,
     model: modelId,
     displayName,
@@ -191,13 +199,13 @@ mediaRouter.delete('/custom/:id', (req: Request, res: Response) => {
   }
 
   const db = getDb();
-  const row = db.prepare("SELECT key_id FROM media_models WHERE id = ? AND platform = 'custom'").get(id) as { key_id: number | null } | undefined;
+  const row = db.prepare("SELECT key_id FROM media_models WHERE id = ? AND is_custom = 1").get(id) as { key_id: number | null } | undefined;
   if (!row) {
     res.status(404).json({ error: { message: `Unknown custom media model ${id}` } });
     return;
   }
   const remove = db.transaction(() => {
-    db.prepare("DELETE FROM media_models WHERE id = ? AND platform = 'custom'").run(id);
+    db.prepare('DELETE FROM media_models WHERE id = ? AND is_custom = 1').run(id);
     deleteUnusedCustomEndpointKey(db, row.key_id);
   });
   remove();

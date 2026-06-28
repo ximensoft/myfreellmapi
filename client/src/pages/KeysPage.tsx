@@ -114,8 +114,11 @@ const PLATFORMS: { value: Platform; label: string; url: string; keyless?: boolea
 
 // 'custom' is configured through its own form (base URL + model), not the
 // generic key dropdown — but it still appears in the grouped provider list.
-const CUSTOM_GROUP: { value: Platform; label: string; url: string } = {
-  value: 'custom',
+// Now custom providers use user-defined platform names; keys with is_custom = true
+// are grouped under the 'custom' group in the UI.
+const CUSTOM_GROUP_PLATFORM = '__custom__'
+const CUSTOM_GROUP: { value: string; label: string; url: string } = {
+  value: CUSTOM_GROUP_PLATFORM,
   label: 'Custom (OpenAI-compatible)',
   url: '',
 }
@@ -408,6 +411,7 @@ function CustomProviderSection() {
   const { t } = useI18n()
   const queryClient = useQueryClient()
   const [customType, setCustomType] = useState<'chat' | 'embedding' | 'image' | 'audio'>('chat')
+  const [providerName, setProviderName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -440,8 +444,9 @@ function CustomProviderSection() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!baseUrl || models.length === 0) return
+    if (!providerName || !baseUrl || models.length === 0) return
     const common = {
+      providerName,
       baseUrl,
       model: models[0],
       displayName: !multiple ? (displayName || undefined) : undefined,
@@ -451,6 +456,7 @@ function CustomProviderSection() {
       addCustom.mutate({
         path: '/api/keys/custom',
         body: {
+          providerName,
           baseUrl,
           models,
           displayName: !multiple ? (displayName || undefined) : undefined,
@@ -508,6 +514,15 @@ function CustomProviderSection() {
             </SelectContent>
           </Select>
         </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t('keys.providerName')}</Label>
+          <Input
+            value={providerName}
+            onChange={e => setProviderName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+            placeholder={t('keys.providerNamePlaceholder')}
+            className="w-[160px] font-mono text-xs"
+          />
+        </div>
         <div className="space-y-1.5 flex-1 min-w-[240px]">
           <Label className="text-xs">{t('keys.customBaseUrl')}</Label>
           <Input
@@ -558,7 +573,7 @@ function CustomProviderSection() {
             className="w-[150px] font-mono text-xs"
           />
         </div>
-        <Button type="submit" size="sm" disabled={!baseUrl || models.length === 0 || addCustom.isPending}>
+        <Button type="submit" size="sm" disabled={!providerName || !baseUrl || models.length === 0 || addCustom.isPending}>
           {addCustom.isPending ? t('keys.addingCustom') : addLabel}
         </Button>
       </form>
@@ -827,7 +842,9 @@ export default function KeysPage() {
 
   const grouped = [...PLATFORMS, CUSTOM_GROUP].map(p => ({
     ...p,
-    keys: keys.filter(k => k.platform === p.value),
+    keys: p.value === CUSTOM_GROUP_PLATFORM
+      ? keys.filter(k => k.isCustom)
+      : keys.filter(k => k.platform === p.value && !k.isCustom),
   })).filter(p => p.keys.length > 0)
 
   return (

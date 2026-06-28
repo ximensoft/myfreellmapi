@@ -228,7 +228,7 @@ export function applyCatalog(db: DatabaseType.Database, catalog: Catalog): NonNu
         continue;
       }
 
-      if (m.platform === 'custom' || !hasProvider(m.platform as Platform)) {
+      if (!hasProvider(m.platform as Platform)) {
         // An older binary may receive models for providers it cannot route yet;
         // skip them — they will appear after the user updates the app.
         counts.skippedUnknownPlatform++;

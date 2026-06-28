@@ -235,6 +235,8 @@
     "customTypeEmbedding": "Embedding",
     "customTypeImage": "Image",
     "customTypeAudio": "Audio",
+    "providerName": "Provider Name",
+    "providerNamePlaceholder": "my-ollama",
     "customBaseUrl": "Base URL",
     "customModels": "Models",
     "customModel": "Model",
