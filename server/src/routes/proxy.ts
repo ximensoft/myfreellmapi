@@ -130,6 +130,14 @@ export function traceRouteEvent(
 const stickySessionMap = new Map<string, { modelDbId: number; lastUsed: number }>();
 const STICKY_TTL_MS = 30 * 60 * 1000; // 30 min session TTL
 
+/** Whether sticky sessions are enabled. Controlled by FREELLMAPI_STICKY_SESSION env var. */
+export function isStickySessionEnabled(): boolean {
+  const raw = process.env.FREELLMAPI_STICKY_SESSION?.trim().toLowerCase();
+  // Default: enabled. Set to 'false' or '0' or 'off' to disable.
+  if (raw === 'false' || raw === '0' || raw === 'off') return false;
+  return true;
+}
+
 function getSessionKey(messages: ChatMessage[], sessionIdHeader?: string, strategyKey?: string): string {
   if (sessionIdHeader) {
     return strategyKey ? `hdr:${sessionIdHeader}::${strategyKey}` : `hdr:${sessionIdHeader}`;
@@ -144,6 +152,8 @@ function getSessionKey(messages: ChatMessage[], sessionIdHeader?: string, strate
 }
 
 export function getStickyModel(messages: ChatMessage[], sessionIdHeader?: string, strategyKey?: string): number | undefined {
+  if (!isStickySessionEnabled()) return undefined;
+
   const hasAssistant = messages.some(m => m.role === 'assistant');
   if (!hasAssistant) return undefined;
 
@@ -161,6 +171,8 @@ export function getStickyModel(messages: ChatMessage[], sessionIdHeader?: string
 }
 
 export function setStickyModel(messages: ChatMessage[], modelDbId: number, sessionIdHeader?: string, strategyKey?: string) {
+  if (!isStickySessionEnabled()) return;
+
   const key = getSessionKey(messages, sessionIdHeader, strategyKey);
   if (!key) return;
   stickySessionMap.set(key, { modelDbId, lastUsed: Date.now() });
