@@ -490,6 +490,53 @@ export function getRateLimitStatus(
   };
 }
 
+export interface CooldownEntry {
+  platform: string;
+  modelId: string;
+  keyId: number;
+  expiresAtMs: number;
+  remainingMs: number;
+}
+
+/**
+ * Return all active cooldowns for a given key (identified by platform + keyId).
+ * Used by the dashboard to show cooldown status with remaining time.
+ */
+export function getActiveCooldownsForKeys(keyIds: Array<{ id: number; platform: string }>): CooldownEntry[] {
+  const now = Date.now();
+  const result: CooldownEntry[] = [];
+
+  return withDb(db => {
+    // Query persisted cooldowns for all requested keys at once
+    if (keyIds.length === 0) return result;
+
+    const rows = db.prepare(`
+      SELECT platform, model_id, key_id, expires_at_ms
+        FROM rate_limit_cooldowns
+       WHERE expires_at_ms > ?
+    `).all(now) as { platform: string; model_id: string; key_id: number; expires_at_ms: number }[];
+
+    const keyIdSet = new Set(keyIds.map(k => `${k.platform}:${k.id}`));
+
+    for (const row of rows) {
+      const key = `${row.platform}:${row.key_id}`;
+      if (keyIdSet.has(key)) {
+        const remainingMs = row.expires_at_ms - now;
+        if (remainingMs > 0) {
+          result.push({
+            platform: row.platform,
+            modelId: row.model_id,
+            keyId: row.key_id,
+            expiresAtMs: row.expires_at_ms,
+            remainingMs,
+          });
+        }
+      }
+    }
+    return result;
+  }) ?? result;
+}
+
 // ── Learning real provider limits from error bodies (self-correcting catalog) ──
 // Free-tier limits drift and our seeded catalog is frequently wrong or null.
 // When a provider rejects a request with its real limit in the body — Groq 413:

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { resolveProvider } from '../providers/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
+import { getActiveCooldownsForKeys } from '../services/ratelimit.js';
 
 export const keysRouter = Router();
 
@@ -77,6 +78,18 @@ keysRouter.get('/', (_req: Request, res: Response) => {
     });
   }
 
+  // Fetch active cooldowns for all keys
+  const keyIdPlatforms = rows.map(row => ({ id: row.id, platform: row.platform }));
+  const cooldowns = getActiveCooldownsForKeys(keyIdPlatforms);
+  // Group cooldowns by key: "platform:keyId" → array of cooldown entries
+  const cooldownsByKey = new Map<string, typeof cooldowns>();
+  for (const c of cooldowns) {
+    const key = `${c.platform}:${c.keyId}`;
+    const list = cooldownsByKey.get(key) ?? [];
+    list.push(c);
+    cooldownsByKey.set(key, list);
+  }
+
   const keys = rows.map(row => {
     let maskedKey = '****';
     try {
@@ -85,6 +98,7 @@ keysRouter.get('/', (_req: Request, res: Response) => {
     } catch {
       maskedKey = '[decrypt failed]';
     }
+    const keyCooldowns = cooldownsByKey.get(`${row.platform}:${row.id}`) ?? [];
     return {
       id: row.id,
       platform: row.platform,
@@ -96,6 +110,10 @@ keysRouter.get('/', (_req: Request, res: Response) => {
       createdAt: row.created_at,
       lastCheckedAt: row.last_checked_at,
       models: row.platform === 'custom' ? (modelsByKeyId.get(row.id) ?? []) : undefined,
+      cooldowns: keyCooldowns.length > 0 ? keyCooldowns.map(c => ({
+        modelId: c.modelId,
+        remainingMs: c.remainingMs,
+      })) : undefined,
     };
   });
 

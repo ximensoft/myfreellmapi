@@ -215,6 +215,8 @@
     "noProviderKeys": "尚无提供方密钥。在上方添加一个即可开始路由。",
     "configuredProviders": "已配置的提供方",
     "proxyToggleLabel": "代理",
+"cooldown": "冷却中 {time}（{count} 个模型）",
+"cooldownOther": "冷却中 {time}（{count} 个模型）",
     "keyCountOne": "{count} 个密钥",
     "keyCountOther": "{count} 个密钥",
     "proxyEnvHintBefore": "也可通过 ",

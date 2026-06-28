@@ -271,6 +271,8 @@
     "noProviderKeys": "No provider keys yet. Add one above to start routing.",
     "configuredProviders": "Configured providers",
     "proxyToggleLabel": "proxy",
+"cooldown": "cooldown {time} ({count} model)",
+"cooldownOther": "cooldown {time} ({count} models)",
     "keyCountOne": "{count} key",
     "keyCountOther": "{count} keys",
     "proxyEnvHintBefore": "Also configurable via the ",

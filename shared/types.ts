@@ -121,6 +121,11 @@ export interface ApiKeyModel {
   family?: string | null;
 }
 
+export interface KeyCooldown {
+  modelId: string;
+  remainingMs: number;
+}
+
 export interface ApiKey {
   id: number;
   platform: Platform;
@@ -132,6 +137,7 @@ export interface ApiKey {
   createdAt: string;
   lastCheckedAt: string | null;
   models?: ApiKeyModel[];
+  cooldowns?: KeyCooldown[];
 }
 
 export interface ApiKeyCreate {

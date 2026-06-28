@@ -8,10 +8,46 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/page-header'
-import type { ApiKey, ApiKeyModel, Platform, ProviderQuotaState } from '../../../shared/types'
+import type { ApiKey, ApiKeyModel, Platform, ProviderQuotaState, KeyCooldown } from '../../../shared/types'
 import { ChevronDown, Pencil, ExternalLink, Globe, Trash2 } from 'lucide-react'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 import { useI18n } from '@/i18n'
+
+/** Format remaining cooldown milliseconds to "Xm Xs" or "Xs". */
+function formatRemaining(ms: number): string {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+/** Badge showing cooldown status for a key, with live countdown. */
+function CooldownBadge({ cooldowns }: { cooldowns: KeyCooldown[] }) {
+  const { t } = useI18n()
+  const mountRef = useRef(Date.now())
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const elapsed = Date.now() - mountRef.current
+  const active = cooldowns.filter(c => c.remainingMs - elapsed > -1000)
+  if (active.length === 0) return null
+
+  const maxRemaining = Math.max(0, Math.max(...active.map(c => c.remainingMs)) - elapsed)
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+      title={active.map(c => `${c.modelId}: ${formatRemaining(c.remainingMs - elapsed)}`).join('\n')}
+    >
+      <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+      {t(active.length === 1 ? 'keys.cooldown' : 'keys.cooldownOther', { count: active.length, time: formatRemaining(maxRemaining) })}
+    </span>
+  )
+}
 
 // Claude (Anthropic) model families the mapping editor exposes. Anthropic
 // clients send these names; each maps to "auto" (router picks a free model) or
@@ -997,6 +1033,9 @@ export default function KeysPage() {
                               </>
                             )}
                             <span className="text-xs text-muted-foreground">{statusLabelKey[status] ? t(statusLabelKey[status]) : status}</span>
+                            {k.cooldowns && k.cooldowns.length > 0 && (
+                              <CooldownBadge cooldowns={k.cooldowns} />
+                            )}
                             <div className="flex-1" />
                             {lastChecked && (
                               <span className="text-[11px] text-muted-foreground tabular-nums">
