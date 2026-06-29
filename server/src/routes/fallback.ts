@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Express router handles model fallback configuration and token budget reporting.
  * It integrates named profiles dynamically into the fallback routing logic and aggregates
  * monthly token consumption and rate limits (RPM/RPD/TPM/TPD) across configured models.
@@ -162,14 +162,17 @@ fallbackRouter.put('/', (req: Request, res: Response) => {
   `);
 
   const updateAll = db.transaction(() => {
+    // Sync enabled state to active profile
+    const activeProfileRow = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
+    const syncProfileId = activeProfileRow ? (parseInt(activeProfileRow.value, 10) || null) : null;
+    const syncProfileUpdate = syncProfileId != null
+      ? db.prepare('UPDATE profile_models SET enabled = ? WHERE profile_id = ? AND model_db_id = ?')
+      : null;
+
     for (const entry of parsed.data) {
       update.run(entry.priority, entry.enabled ? 1 : 0, entry.modelDbId);
-      // Sync enabled state to active profile
-      const activeProfileRow = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
-      const syncProfileId = activeProfileRow ? (parseInt(activeProfileRow.value, 10) || null) : null;
-      if (syncProfileId != null) {
-        db.prepare('UPDATE profile_models SET enabled = ? WHERE profile_id = ? AND model_db_id = ?')
-          .run(entry.enabled ? 1 : 0, syncProfileId, entry.modelDbId);
+      if (syncProfileUpdate) {
+        syncProfileUpdate.run(entry.enabled ? 1 : 0, syncProfileId, entry.modelDbId);
       }
     }
   });
