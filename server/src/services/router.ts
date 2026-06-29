@@ -883,35 +883,17 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   // instantly rejected by selectKeyForModel. Batch-query the set of platforms
   // (and custom key_ids) that have at least one enabled+healthy key so we only
   // log models that could really be routed to.
-  //
-  // We also exclude models whose EVERY key is currently on cooldown: a model
-  // with all keys cooling down cannot serve this request, so showing it in the
-  // top3 is misleading. setCooldown() always persists to the
-  // rate_limit_cooldowns table, so a single batch query captures the full
-  // picture without needing the in-memory cooldown map.
-  const platformKeyIds = new Map<string, number[]>();
-  for (const row of db.prepare("SELECT id, platform FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown')").all() as { id: number; platform: string }[]) {
-    let arr = platformKeyIds.get(row.platform);
-    if (!arr) { arr = []; platformKeyIds.set(row.platform, arr); }
-    arr.push(row.id);
-  }
+  const platformsWithKeys = new Set(
+    (db.prepare("SELECT DISTINCT platform FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown')").all() as { platform: string }[])
+      .map(r => r.platform),
+  );
   const customKeyIdsWithAccess = new Set(
     (db.prepare("SELECT id FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown') AND is_custom = 1").all() as { id: number }[])
       .map(r => r.id),
   );
-  const activeCooldowns = new Set(
-    (db.prepare("SELECT platform || ':' || model_id || ':' || key_id AS k FROM rate_limit_cooldowns WHERE expires_at_ms > ?").all(Date.now()) as { k: string }[])
-      .map(r => r.k),
-  );
   const hasUsableKey = (e: ChainRow): boolean => {
-    if (e.is_custom === 1) {
-      if (e.key_id == null || !customKeyIdsWithAccess.has(e.key_id)) return false;
-      return !activeCooldowns.has(`${e.platform}:${e.model_id}:${e.key_id}`);
-    }
-    const keyIds = platformKeyIds.get(e.platform);
-    if (!keyIds || keyIds.length === 0) return false;
-    // At least one key must be not on cooldown for this specific model.
-    return keyIds.some(kid => !activeCooldowns.has(`${e.platform}:${e.model_id}:${kid}`));
+    if (e.is_custom === 1) return e.key_id != null && customKeyIdsWithAccess.has(e.key_id);
+    return platformsWithKeys.has(e.platform);
   };
 
   const usableTop3 = sortedChain.filter(hasUsableKey).slice(0, 3);
