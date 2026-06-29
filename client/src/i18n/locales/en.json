@@ -275,6 +275,7 @@
     "proxyToggleLabel": "proxy",
 "cooldown": "cooldown {time} ({count} model)",
 "cooldownOther": "cooldown {time} ({count} models)",
+"clearCooldown": "Clear cooldown",
     "keyCountOne": "{count} key",
     "keyCountOther": "{count} keys",
     "proxyEnvHintBefore": "Also configurable via the ",

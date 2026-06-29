@@ -537,6 +537,28 @@ export function getActiveCooldownsForKeys(keyIds: Array<{ id: number; platform: 
   }) ?? result;
 }
 
+/**
+ * Clear ALL cooldowns (in-memory + persisted) for a given platform + keyId.
+ * Used by the dashboard "unlock" button to manually unblock a key.
+ */
+export function clearCooldownsForKey(platform: string, keyId: number): number {
+  const prefix = `${platform}:`;
+  let cleared = 0;
+  // In-memory
+  for (const k of cooldowns.keys()) {
+    if (k.startsWith(prefix) && k.includes(`:${keyId}:cooldown`)) {
+      cooldowns.delete(k);
+      cleared++;
+    }
+  }
+  // Persisted
+  withDb(db => {
+    const info = db.prepare('DELETE FROM rate_limit_cooldowns WHERE platform = ? AND key_id = ?').run(platform, keyId);
+    cleared = Math.max(cleared, info.changes);
+  });
+  return cleared;
+}
+
 // ── Learning real provider limits from error bodies (self-correcting catalog) ──
 // Free-tier limits drift and our seeded catalog is frequently wrong or null.
 // When a provider rejects a request with its real limit in the body — Groq 413:

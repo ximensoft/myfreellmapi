@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/page-header'
 import type { ApiKey, ApiKeyModel, Platform, ProviderQuotaState, KeyCooldown } from '../../../shared/types'
-import { ChevronDown, Pencil, ExternalLink, Globe, Trash2 } from 'lucide-react'
+import { ChevronDown, Pencil, ExternalLink, Globe, Trash2, Unlock } from 'lucide-react'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 import { useI18n } from '@/i18n'
 
@@ -21,9 +21,10 @@ function formatRemaining(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
-/** Badge showing cooldown status for a key, with live countdown. */
-function CooldownBadge({ cooldowns }: { cooldowns: KeyCooldown[] }) {
+/** Badge showing cooldown status for a key, with live countdown and unlock button. */
+function CooldownBadge({ cooldowns, keyId }: { cooldowns: KeyCooldown[]; keyId: number }) {
   const { t } = useI18n()
+  const queryClient = useQueryClient()
   const mountRef = useRef(Date.now())
   const [tick, setTick] = useState(0)
 
@@ -38,13 +39,32 @@ function CooldownBadge({ cooldowns }: { cooldowns: KeyCooldown[] }) {
 
   const maxRemaining = Math.max(0, Math.max(...active.map(c => c.remainingMs)) - elapsed)
 
+  const clearCooldown = useMutation({
+    mutationFn: () => apiFetch(`/api/keys/${keyId}/cooldowns`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['keys'] })
+      queryClient.invalidateQueries({ queryKey: ['health'] })
+    },
+  })
+
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-      title={active.map(c => `${c.modelId}: ${formatRemaining(c.remainingMs - elapsed)}`).join('\n')}
-    >
-      <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-      {t(active.length === 1 ? 'keys.cooldown' : 'keys.cooldownOther', { count: active.length, time: formatRemaining(maxRemaining) })}
+    <span className="inline-flex items-center gap-1">
+      <span
+        className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+        title={active.map(c => `${c.modelId}: ${formatRemaining(c.remainingMs - elapsed)}`).join('\n')}
+      >
+        <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+        {t(active.length === 1 ? 'keys.cooldown' : 'keys.cooldownOther', { count: active.length, time: formatRemaining(maxRemaining) })}
+      </span>
+      <button
+        type="button"
+        onClick={() => clearCooldown.mutate()}
+        disabled={clearCooldown.isPending}
+        className="inline-flex items-center justify-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1 py-0.5 text-[10px] font-medium text-emerald-600 hover:bg-emerald-500/25 dark:text-emerald-400 dark:hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+        title={t('keys.clearCooldown')}
+      >
+        <Unlock className="size-2.5" />
+      </button>
     </span>
   )
 }
@@ -1051,7 +1071,7 @@ export default function KeysPage() {
                             )}
                             <span className="text-xs text-muted-foreground">{statusLabelKey[status] ? t(statusLabelKey[status]) : status}</span>
                             {k.cooldowns && k.cooldowns.length > 0 && (
-                              <CooldownBadge cooldowns={k.cooldowns} />
+                              <CooldownBadge cooldowns={k.cooldowns} keyId={k.id} />
                             )}
                             <div className="flex-1" />
                             {lastChecked && (

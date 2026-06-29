@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { hasProvider, resolveProvider } from '../providers/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
-import { getActiveCooldownsForKeys } from '../services/ratelimit.js';
+import { getActiveCooldownsForKeys, clearCooldownsForKey } from '../services/ratelimit.js';
 
 export const keysRouter = Router();
 
@@ -404,6 +404,25 @@ keysRouter.delete('/:id', (req: Request, res: Response) => {
   remove();
 
   res.json({ success: true });
+});
+
+// Clear all cooldowns for a key (manual unlock from the dashboard)
+keysRouter.delete('/:id/cooldowns', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: { message: 'Invalid key ID' } });
+    return;
+  }
+
+  const db = getDb();
+  const row = db.prepare('SELECT platform FROM api_keys WHERE id = ?').get(id) as { platform: string } | undefined;
+  if (!row) {
+    res.status(404).json({ error: { message: 'Key not found' } });
+    return;
+  }
+
+  const cleared = clearCooldownsForKey(row.platform, id);
+  res.json({ success: true, cleared });
 });
 
 // Toggle all keys for a platform
