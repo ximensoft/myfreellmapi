@@ -146,6 +146,15 @@ modelsRouter.patch('/:id', (req: Request, res: Response) => {
     if (parsed.data.fallbackEnabled !== undefined) {
       db.prepare('UPDATE fallback_config SET enabled = ? WHERE model_db_id = ?')
         .run(parsed.data.fallbackEnabled ? 1 : 0, id);
+      // Sync enabled state to active profile
+      const apRow = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
+      if (apRow) {
+        const apId = parseInt(apRow.value, 10);
+        if (Number.isInteger(apId)) {
+          db.prepare('UPDATE profile_models SET enabled = ? WHERE profile_id = ? AND model_db_id = ?')
+            .run(parsed.data.fallbackEnabled ? 1 : 0, apId, id);
+        }
+      }
     }
   });
   applyUpdate();

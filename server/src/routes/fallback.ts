@@ -16,7 +16,7 @@ import { getPenaltyInspector } from '../services/penalty-inspector.js';
 export const fallbackRouter = Router();
 
 // ── Bandit routing strategy ─────────────────────────────────────────────────
-// GET  /routing → active strategy, preset weights, and the per-model score
+// GET  /routing �?active strategy, preset weights, and the per-model score
 //                 breakdown (reliability / speed / intelligence + guardrails).
 fallbackRouter.get('/routing', (_req: Request, res: Response) => {
   res.json(getRoutingScores());
@@ -37,7 +37,7 @@ const routingSchema = z.object({
   }).optional(),
 });
 
-// PUT /routing → switch strategy. Presets are just weight vectors over the three
+// PUT /routing �?switch strategy. Presets are just weight vectors over the three
 // axes; 'priority' falls back to the legacy manual chain order; 'custom' uses
 // the user's saved weights (optionally updated in the same request).
 fallbackRouter.put('/routing', (req: Request, res: Response) => {
@@ -162,8 +162,18 @@ fallbackRouter.put('/', (req: Request, res: Response) => {
   `);
 
   const updateAll = db.transaction(() => {
+    // Sync enabled state to active profile
+    const activeProfileRow = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
+    const syncProfileId = activeProfileRow ? (parseInt(activeProfileRow.value, 10) || null) : null;
+    const syncProfileUpdate = syncProfileId != null
+      ? db.prepare('UPDATE profile_models SET enabled = ? WHERE profile_id = ? AND model_db_id = ?')
+      : null;
+
     for (const entry of parsed.data) {
       update.run(entry.priority, entry.enabled ? 1 : 0, entry.modelDbId);
+      if (syncProfileUpdate) {
+        syncProfileUpdate.run(entry.enabled ? 1 : 0, syncProfileId, entry.modelDbId);
+      }
     }
   });
   updateAll();
@@ -171,7 +181,7 @@ fallbackRouter.put('/', (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-// `intelligence_rank` is scoped to each provider's own catalog — a provider's
+// `intelligence_rank` is scoped to each provider's own catalog �?a provider's
 // #1 model is not globally #1 (see issue #135: MiniMax's top model outranking
 // Gemini Pro because both read "Intel #1"). `size_label` IS a cross-provider
 // capability tier, so normalize on it first and use intelligence_rank only as
@@ -179,7 +189,7 @@ fallbackRouter.put('/', (req: Request, res: Response) => {
 const INTELLIGENCE_TIER =
   "CASE m.size_label WHEN 'Frontier' THEN 1 WHEN 'Large' THEN 2 WHEN 'Medium' THEN 3 WHEN 'Small' THEN 4 ELSE 5 END";
 
-// Sort presets — `orderBy` is selected from a fixed whitelist, never from
+// Sort presets �?`orderBy` is selected from a fixed whitelist, never from
 // user input directly, so the interpolation below is safe.
 const SORT_PRESETS: Record<string, string> = {
   intelligence: `${INTELLIGENCE_TIER} ASC, m.intelligence_rank ASC`,
@@ -191,7 +201,7 @@ function getBudgetScore(m: { monthly_token_budget: string; tpd_limit: number | n
   
   const str = m.monthly_token_budget;
   if (!str) return 0;
-  if (str.toLowerCase().includes('unlimited') || str.includes('∞')) return Infinity;
+  if (str.toLowerCase().includes('unlimited') || str.includes('�?)) return Infinity;
   
   const cleanStr = str.split('(')[0];
   const matches = cleanStr.match(/[\d.]+/g);
@@ -300,7 +310,7 @@ fallbackRouter.get('/token-usage', (_req: Request, res: Response) => {
       tpdLimit: m.tpd_limit,
     }));
 
-  // Total budget counts all models (both enabled and disabled — they contribute to the pool)
+  // Total budget counts all models (both enabled and disabled �?they contribute to the pool)
   const totalBudget = modelBudgets.reduce((s, m) => s + m.budget, 0);
 
   // Tokens used this month
