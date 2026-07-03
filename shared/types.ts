@@ -138,6 +138,7 @@ export interface ApiKey {
   label: string;
   maskedKey: string;
   baseUrl: string | null;
+  anthropicBaseUrl?: string | null;
   status: KeyStatus;
   enabled: boolean;
   isCustom: boolean;

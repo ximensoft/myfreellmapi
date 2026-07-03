@@ -716,11 +716,14 @@ export default function KeysPage() {
   const [accountId, setAccountId] = useState('')
   const [label, setLabel] = useState('')
   const [editingKeyId, setEditingKeyId] = useState<number | null>(null)
-  const [editingLabel, setEditingLabel] = useState('')
+  const [editLabel, setEditLabel] = useState('')
+  const [editApiKey, setEditApiKey] = useState('')
+  const [editBaseUrl, setEditBaseUrl] = useState('')
+  const [editAnthropicBaseUrl, setEditAnthropicBaseUrl] = useState('')
+  const [editModelNames, setEditModelNames] = useState<Record<number, string>>({})
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [confirmDeleteModelKey, setConfirmDeleteModelKey] = useState<string | null>(null)
   const [expandedKeyIds, setExpandedKeyIds] = useState<Set<number>>(new Set())
-  const editInputRef = useRef<HTMLInputElement>(null)
 
   const { data: keys = [], isLoading } = useQuery<ApiKey[]>({
     queryKey: ['keys'],
@@ -797,32 +800,78 @@ export default function KeysPage() {
   })
 
   const updateKey = useMutation({
-    mutationFn: ({ id, label }: { id: number; label: string }) =>
+    mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) =>
       apiFetch(`/api/keys/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ label }),
+        body: JSON.stringify(body),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['keys'] })
+      queryClient.invalidateQueries({ queryKey: ['health'] })
+      queryClient.invalidateQueries({ queryKey: ['fallback'] })
+      queryClient.invalidateQueries({ queryKey: ['models'] })
       setEditingKeyId(null)
-      setEditingLabel('')
     },
+  })
+
+  const updateModelName = useMutation({
+    mutationFn: ({ modelDbId, displayName }: { modelDbId: number; displayName: string }) =>
+      apiFetch(`/api/models/${modelDbId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ displayName }),
+      }),
   })
 
   function startEditing(key: ApiKey) {
     setEditingKeyId(key.id)
-    setEditingLabel(key.label)
+    setEditLabel(key.label)
+    setEditApiKey('')
+    setEditBaseUrl(key.baseUrl ?? '')
+    setEditAnthropicBaseUrl(key.anthropicBaseUrl ?? '')
+    const names: Record<number, string> = {}
+    for (const m of key.models ?? []) names[m.id] = m.displayName
+    setEditModelNames(names)
   }
 
   function cancelEditing() {
     setEditingKeyId(null)
-    setEditingLabel('')
+    setEditLabel('')
+    setEditApiKey('')
+    setEditBaseUrl('')
+    setEditAnthropicBaseUrl('')
+    setEditModelNames({})
   }
 
-  function saveEditing(id: number) {
-    if (editingLabel !== undefined) {
-      updateKey.mutate({ id, label: editingLabel })
+  async function saveEditing(key: ApiKey) {
+    const body: Record<string, unknown> = {}
+    if (editLabel !== key.label) body.label = editLabel
+    if (editApiKey.trim()) body.apiKey = editApiKey.trim()
+    if (key.isCustom && editBaseUrl !== (key.baseUrl ?? '')) body.baseUrl = editBaseUrl
+    if (key.isCustom && editAnthropicBaseUrl !== (key.anthropicBaseUrl ?? '')) body.anthropicBaseUrl = editAnthropicBaseUrl.trim() || null
+
+    const modelUpdates: Promise<unknown>[] = []
+    for (const m of key.models ?? []) {
+      const newName = editModelNames[m.id] ?? ''
+      if (newName && newName !== m.displayName) {
+        modelUpdates.push(updateModelName.mutateAsync({ modelDbId: m.id, displayName: newName }))
+      }
     }
+
+    if (Object.keys(body).length === 0 && modelUpdates.length === 0) {
+      cancelEditing()
+      return
+    }
+
+    if (Object.keys(body).length > 0) {
+      await updateKey.mutateAsync({ id: key.id, body })
+    }
+    if (modelUpdates.length > 0) {
+      await Promise.all(modelUpdates)
+      queryClient.invalidateQueries({ queryKey: ['keys'] })
+      queryClient.invalidateQueries({ queryKey: ['models'] })
+      queryClient.invalidateQueries({ queryKey: ['fallback'] })
+    }
+    setEditingKeyId(null)
   }
 
   function toggleExpandedKey(id: number) {
@@ -833,12 +882,6 @@ export default function KeysPage() {
       return next
     })
   }
-
-  useEffect(() => {
-    if (editingKeyId !== null && editInputRef.current) {
-      editInputRef.current.focus()
-    }
-  }, [editingKeyId])
 
   const needsAccountId = platform === 'cloudflare'
   const isKeyless = PLATFORMS.find(p => p.value === platform)?.keyless ?? false
@@ -1060,28 +1103,11 @@ export default function KeysPage() {
                               </Button>
                             )}
                             <code className="text-xs font-mono flex-shrink-0">{k.maskedKey}</code>
-                            {isEditing ? (
-                              <Input
-                                ref={editInputRef}
-                                value={editingLabel}
-                                onChange={e => setEditingLabel(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') saveEditing(k.id)
-                                  if (e.key === 'Escape') cancelEditing()
-                                }}
-                                onBlur={() => saveEditing(k.id)}
-                                className="h-6 w-[160px] text-xs"
-                                disabled={updateKey.isPending}
-                              />
-                            ) : (
-                              <>
-                                {k.label && <span className="text-xs text-muted-foreground">{k.label}</span>}
-                                {k.baseUrl && (
-                                  <code className="text-[11px] text-muted-foreground font-mono truncate max-w-[260px]" title={k.baseUrl}>
-                                    {k.baseUrl}
-                                  </code>
-                                )}
-                              </>
+                            {k.label && <span className="text-xs text-muted-foreground">{k.label}</span>}
+                            {k.baseUrl && (
+                              <code className="text-[11px] text-muted-foreground font-mono truncate max-w-[260px]" title={k.baseUrl}>
+                                {k.baseUrl}
+                              </code>
                             )}
                             <span className="text-xs text-muted-foreground">{statusLabelKey[status] ? t(statusLabelKey[status]) : status}</span>
                             {k.cooldowns && k.cooldowns.length > 0 && (
@@ -1093,11 +1119,9 @@ export default function KeysPage() {
                                 {formatSqliteUtcToLocalTime(lastChecked, { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             )}
-                            {!isEditing && (
-                              <Button variant="ghost" size="xs" onClick={() => startEditing(k)}>
-                                <Pencil className="size-3" />
-                              </Button>
-                            )}
+                            <Button variant="ghost" size="xs" onClick={() => isEditing ? cancelEditing() : startEditing(k)}>
+                              <Pencil className="size-3" />
+                            </Button>
                             <Button variant="ghost" size="xs" onClick={() => checkKey.mutate(k.id)} disabled={checkKey.isPending}>
                               {t('common.check')}
                             </Button>
@@ -1119,6 +1143,82 @@ export default function KeysPage() {
                               {confirmDeleteId === k.id ? t('keys.confirmRemove') : t('common.remove')}
                             </Button>
                           </div>
+                          {isEditing && (
+                            <div className="border-t bg-muted/20 px-4 py-3">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs">{t('keys.label')}</Label>
+                                  <Input
+                                    value={editLabel}
+                                    onChange={e => setEditLabel(e.target.value)}
+                                    className="h-7 w-[160px] text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5 flex-1 min-w-[200px]">
+                                  <Label className="text-xs">{t('keys.customApiKey')}</Label>
+                                  <Input
+                                    type="password"
+                                    value={editApiKey}
+                                    onChange={e => setEditApiKey(e.target.value)}
+                                    placeholder={t('keys.editApiKeyPlaceholder')}
+                                    className="h-7 font-mono text-xs"
+                                  />
+                                </div>
+                                {k.isCustom && (
+                                  <div className="space-y-1.5 flex-1 min-w-[200px]">
+                                    <Label className="text-xs">{t('keys.customBaseUrl')}</Label>
+                                    <Input
+                                      value={editBaseUrl}
+                                      onChange={e => setEditBaseUrl(e.target.value)}
+                                      className="h-7 font-mono text-xs"
+                                    />
+                                  </div>
+                                )}
+                                {k.isCustom && (
+                                  <div className="space-y-1.5 flex-1 min-w-[200px]">
+                                    <Label className="text-xs">{t('keys.customAnthropicBaseUrl')}</Label>
+                                    <Input
+                                      value={editAnthropicBaseUrl}
+                                      onChange={e => setEditAnthropicBaseUrl(e.target.value)}
+                                      placeholder={t('keys.customAnthropicBaseUrlPlaceholder')}
+                                      className="h-7 font-mono text-xs"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                              {k.isCustom && customModels.length > 0 && (
+                                <div className="mt-3 space-y-2">
+                                  <Label className="text-xs">{t('keys.editModelNames')}</Label>
+                                  {customModels.map(m => (
+                                    <div key={m.id} className="flex items-center gap-2">
+                                      <code className="text-[11px] text-muted-foreground font-mono w-[180px] truncate" title={m.modelId}>{m.modelId}</code>
+                                      <Input
+                                        value={editModelNames[m.id] ?? ''}
+                                        onChange={e => setEditModelNames(prev => ({ ...prev, [m.id]: e.target.value }))}
+                                        className="h-7 w-[200px] text-xs"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="mt-3 flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => saveEditing(k)}
+                                  disabled={updateKey.isPending || updateModelName.isPending}
+                                >
+                                  {t('common.save')}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={cancelEditing}
+                                >
+                                  {t('common.cancel')}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                           {hasCustomModels && isExpanded && (
                             <div className="flex flex-wrap gap-2 border-t bg-muted/20 px-4 py-3 pl-12">
                               {customModels.map(model => {

@@ -211,6 +211,8 @@
     "customApiKey": "Chiave API",
     "customAnthropicBaseUrl": "URL base Anthropic",
     "customAnthropicBaseUrlPlaceholder": "opzionale — per l'inoltro nativo Anthropic /v1/messages",
+    "editApiKeyPlaceholder": "Lascia vuoto per mantenere la chiave attuale",
+    "editModelNames": "Nomi visualizzati dei modelli",
     "addModel": "Aggiungi modello",
     "addModels": "Aggiungi {count} modelli",
     "addingCustom": "Aggiunta…",

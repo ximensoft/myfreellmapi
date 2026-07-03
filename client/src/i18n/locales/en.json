@@ -248,6 +248,8 @@
     "customApiKey": "API key",
     "customAnthropicBaseUrl": "Anthropic Base URL",
     "customAnthropicBaseUrlPlaceholder": "optional — for native Anthropic /v1/messages forwarding",
+    "editApiKeyPlaceholder": "Leave blank to keep current key",
+    "editModelNames": "Model display names",
     "addModel": "Add model",
     "addModels": "Add {count} models",
     "addEmbeddingModel": "Add embedding",

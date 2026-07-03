@@ -33,9 +33,17 @@ const addKeySchema = z.object({
 const updateKeySchema = z.object({
   enabled: z.boolean().optional(),
   label: z.string().optional(),
-}).refine(data => data.enabled !== undefined || data.label !== undefined, {
-  message: 'At least one of enabled or label must be provided',
-});
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  anthropicBaseUrl: z.string().nullable().optional(),
+}).refine(data =>
+  data.enabled !== undefined ||
+  data.label !== undefined ||
+  data.apiKey !== undefined ||
+  data.baseUrl !== undefined ||
+  data.anthropicBaseUrl !== undefined,
+  { message: 'At least one of enabled, label, apiKey, baseUrl, or anthropicBaseUrl must be provided' },
+);
 
 // List all keys (masked)
 keysRouter.get('/', (_req: Request, res: Response) => {
@@ -448,7 +456,7 @@ keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
   res.json({ success: true, enabled, updatedKeys: result.changes });
 });
 
-// Update key (toggle enable/disable or edit label)
+// Update key (toggle enable/disable, edit label, or update credentials/URL for custom keys)
 keysRouter.patch('/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
@@ -462,9 +470,9 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const { enabled, label } = parsed.data;
+  const { enabled, label, apiKey, baseUrl, anthropicBaseUrl } = parsed.data;
   const updates: string[] = [];
-  const values: (string | number)[] = [];
+  const values: (string | number | null)[] = [];
 
   if (enabled !== undefined) {
     updates.push('enabled = ?');
@@ -473,6 +481,20 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
   if (label !== undefined) {
     updates.push('label = ?');
     values.push(label);
+  }
+  if (baseUrl !== undefined) {
+    updates.push('base_url = ?');
+    values.push(baseUrl.trim().replace(/\/+$/, ''));
+  }
+  if (anthropicBaseUrl !== undefined) {
+    updates.push('anthropic_base_url = ?');
+    values.push(anthropicBaseUrl ? anthropicBaseUrl.trim().replace(/\/+$/, '') : null);
+  }
+  if (apiKey !== undefined) {
+    const keyToStore = apiKey.trim() || 'no-key';
+    const { encrypted, iv, authTag } = encrypt(keyToStore);
+    updates.push('encrypted_key = ?', 'iv = ?', 'auth_tag = ?', "status = 'unknown'");
+    values.push(encrypted, iv, authTag);
   }
 
   values.push(id);
