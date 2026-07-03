@@ -90,7 +90,7 @@ function shortRequestId(requestId: string): string {
 type TraceEvent = 'start' | 'next' | 'ok' | 'fail';
 
 export function traceRouteEvent(
-  scope: 'Proxy' | 'Responses',
+  scope: 'Proxy' | 'Responses' | 'Anthropic',
   opts: {
     event: TraceEvent;
     requestId: string;
@@ -822,7 +822,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
             outputTokens: totalOutputTokens,
           });
           logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId);
-          console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+          console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {
           if (headerSent) {
@@ -890,7 +890,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
           outputTokens: result.usage?.completion_tokens ?? 0,
         });
         logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId);
-        console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+        console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       }
     } catch (err: any) {
@@ -1644,7 +1644,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             outputTokens: totalOutputTokens,
           });
           logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens + injectedHandoffTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId);
-          console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+          console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {
           if (headerSent) {
@@ -1765,7 +1765,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           outputTokens: result.usage?.completion_tokens ?? 0,
         });
         logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId);
-        console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+        console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       }
     } catch (err: any) {

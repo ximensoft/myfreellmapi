@@ -658,7 +658,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
           outputTokens: totalOutputTokens,
         });
         logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens, totalOutputTokens, Date.now() - start, null);
-        console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+        console.log(`[router] routeRequest: completed [responses] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       } else {
         const result = await route.provider.chatCompletion(
@@ -737,7 +737,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
           outputTokens: completionTokens,
         });
         logRequest(route.platform, route.modelId, route.keyId, 'success', promptTokens, completionTokens, Date.now() - start, null);
-        console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+        console.log(`[router] routeRequest: completed [responses] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       }
     } catch (err: any) {
