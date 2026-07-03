@@ -439,7 +439,7 @@ function getActiveChain(db: Database): ChainRow[] {
              m.supports_tools, m.context_window, m.key_id, m.is_custom
       FROM profile_models pm
       JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
-      WHERE pm.profile_id = ?
+      WHERE pm.profile_id = ? AND pm.enabled = 1
       ORDER BY pm.priority ASC
     `).all(profileId) as ChainRow[];
 
@@ -472,6 +472,7 @@ function getActiveChain(db: Database): ChainRow[] {
            m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
+    WHERE fc.enabled = 1
     ORDER BY fc.priority ASC
   `).all() as ChainRow[];
 
@@ -492,7 +493,7 @@ function getChainByProfileName(db: Database, name: string): ChainRow[] | null {
            m.supports_tools, m.context_window, m.key_id, m.is_custom
     FROM profile_models pm
     JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
-    WHERE pm.profile_id = ?
+    WHERE pm.profile_id = ? AND pm.enabled = 1
     ORDER BY pm.priority ASC
   `).all(profile.id) as ChainRow[];
 }
