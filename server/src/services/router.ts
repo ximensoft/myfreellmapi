@@ -475,9 +475,9 @@ function getActiveChain(db: Database): ChainRow[] {
     // Debug: log whether custom models are present in the active profile chain
     const customInChain = chain.filter(e => e.is_custom === 1);
     if (customInChain.length > 0) {
-      console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
+      // console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=${customInChain.length} (${customInChain.map(c => `${c.model_id} key_id=${c.key_id}`).join(', ')})`);
     } else {
-      console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=0 (no custom models in profile!)`);
+      // console.log(`[router] getActiveChain: profile_id=${profileId}, strategy=${strategy}, total=${chain.length}, custom=0 (no custom models in profile!)`);
       // Also check if custom models exist in fallback_config but are missing from profile_models
       const fcCustom = db.prepare(`
         SELECT m.model_id, m.key_id
@@ -507,7 +507,7 @@ function getActiveChain(db: Database): ChainRow[] {
 
   const fallbackChain = rawFallbackChain.filter(hasUsableKey);
 
-  console.log(`[router] getActiveChain: using fallback_config (no active profile), strategy=${strategy}, total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
+  // console.log(`[router] getActiveChain: using fallback_config (no active profile), strategy=${strategy}, total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
 
   return fallbackChain;
 }
