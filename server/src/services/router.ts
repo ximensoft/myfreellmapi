@@ -38,6 +38,7 @@ interface KeyRow {
   enabled: number;
   base_url: string | null;
   is_custom: number;
+  anthropic_base_url: string | null;
 }
 
 // Chain row joined with the model fields the bandit needs to score it.
@@ -77,6 +78,12 @@ export interface RouteResult {
   // exhaustion (escalate the cooldown) from a transient per-minute spike.
   rpdLimit: number | null;
   tpdLimit: number | null;
+  // When a custom provider also exposes a native Anthropic-compatible endpoint,
+  // this is that endpoint's base URL. The Anthropic /v1/messages route uses it
+  // to forward the original wire-format body directly (bypassing the OpenAI
+  // conversion that can corrupt message ordering for strict providers).
+  // Undefined/null for built-in platforms and custom providers without one.
+  anthropicBaseUrl?: string | null;
 }
 
 // Round-robin index per platform
@@ -689,6 +696,7 @@ function selectKeyForModel(entry: ChainRow, estimatedTokens: number, skipKeys?: 
       displayName: entry.display_name,
       rpdLimit: limits.rpd,
       tpdLimit: limits.tpd,
+      anthropicBaseUrl: key.anthropic_base_url ?? null,
     };
   }
 

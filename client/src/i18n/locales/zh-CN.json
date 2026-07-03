@@ -193,6 +193,8 @@
     "customDisplayNamePerModel": "按模型命名",
     "customDisplayNameOptional": "可选",
     "customApiKey": "API 密钥",
+    "customAnthropicBaseUrl": "Anthropic Base URL",
+    "customAnthropicBaseUrlPlaceholder": "可选 — 用于原生 Anthropic /v1/messages 转发",
     "addModel": "添加模型",
     "addModels": "添加 {count} 个模型",
     "addingCustom": "添加中…",

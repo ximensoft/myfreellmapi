@@ -191,6 +191,8 @@
     "customDisplayNamePerModel": "par modèle",
     "customDisplayNameOptional": "facultatif",
     "customApiKey": "Clé API",
+    "customAnthropicBaseUrl": "URL de base Anthropic",
+    "customAnthropicBaseUrlPlaceholder": "optionnel — pour le transfert natif Anthropic /v1/messages",
     "addModel": "Ajouter un modèle",
     "addModels": "Ajouter {count} modèles",
     "addingCustom": "Ajout…",

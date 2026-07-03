@@ -108,6 +108,7 @@ keysRouter.get('/', (_req: Request, res: Response) => {
       label: row.label,
       maskedKey,
       baseUrl: row.base_url ?? null,
+      anthropicBaseUrl: row.anthropic_base_url ?? null,
       status: row.status,
       enabled: row.enabled === 1,
       isCustom: row.is_custom === 1,
@@ -198,6 +199,7 @@ const modelEntrySchema = z.union([
 const customProviderSchema = z.object({
   providerName: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/, 'Provider name must contain only letters, numbers, hyphens, and underscores').default('custom'),
   baseUrl: z.string().url('baseUrl must be a valid URL'),
+  anthropicBaseUrl: z.string().url('anthropicBaseUrl must be a valid URL').optional(),
   model: z.string().optional(),
   models: z.array(modelEntrySchema).optional(),
   displayName: z.string().optional(),
@@ -223,6 +225,7 @@ keysRouter.post('/custom', (req: Request, res: Response) => {
   }
 
   const baseUrl = parsed.data.baseUrl.trim().replace(/\/+$/, '');
+  const anthropicBaseUrl = parsed.data.anthropicBaseUrl?.trim().replace(/\/+$/, '') || null;
   // Local servers often need no key; keep a sentinel so there's always a bearer.
   const providedKey = parsed.data.apiKey?.trim() || undefined;
   const label = parsed.data.label?.trim() || undefined;
@@ -263,8 +266,8 @@ keysRouter.post('/custom', (req: Request, res: Response) => {
       keyId = existing.id;
       if (providedKey) {
         const { encrypted, iv, authTag } = encrypt(providedKey);
-        db.prepare("UPDATE api_keys SET label = COALESCE(?, label), encrypted_key = ?, iv = ?, auth_tag = ?, status = 'unknown', enabled = 1 WHERE id = ?")
-          .run(label ?? null, encrypted, iv, authTag, existing.id);
+        db.prepare("UPDATE api_keys SET label = COALESCE(?, label), encrypted_key = ?, iv = ?, auth_tag = ?, anthropic_base_url = ?, status = 'unknown', enabled = 1 WHERE id = ?")
+          .run(label ?? null, encrypted, iv, authTag, anthropicBaseUrl, existing.id);
         storedKeyForMask = providedKey;
       } else {
         try {
@@ -272,16 +275,16 @@ keysRouter.post('/custom', (req: Request, res: Response) => {
         } catch {
           storedKeyForMask = 'no-key';
         }
-        db.prepare("UPDATE api_keys SET label = COALESCE(?, label), status = 'unknown', enabled = 1 WHERE id = ?")
-          .run(label ?? null, existing.id);
+        db.prepare("UPDATE api_keys SET label = COALESCE(?, label), anthropic_base_url = ?, status = 'unknown', enabled = 1 WHERE id = ?")
+          .run(label ?? null, anthropicBaseUrl, existing.id);
       }
     } else {
       const keyToStore = providedKey ?? 'no-key';
       const { encrypted, iv, authTag } = encrypt(keyToStore);
       const r = db.prepare(`
-        INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url, is_custom)
-        VALUES (?, ?, ?, ?, ?, 'unknown', 1, ?, 1)
-      `).run(providerName, label ?? providerName, encrypted, iv, authTag, baseUrl);
+        INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, base_url, is_custom, anthropic_base_url)
+        VALUES (?, ?, ?, ?, ?, 'unknown', 1, ?, 1, ?)
+      `).run(providerName, label ?? providerName, encrypted, iv, authTag, baseUrl, anthropicBaseUrl);
       keyId = Number(r.lastInsertRowid);
       storedKeyForMask = keyToStore;
     }

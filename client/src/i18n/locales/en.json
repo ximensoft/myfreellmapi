@@ -246,6 +246,8 @@
     "customFamily": "Family",
     "customFamilyPlaceholder": "defaults to model id",
     "customApiKey": "API key",
+    "customAnthropicBaseUrl": "Anthropic Base URL",
+    "customAnthropicBaseUrlPlaceholder": "optional — for native Anthropic /v1/messages forwarding",
     "addModel": "Add model",
     "addModels": "Add {count} models",
     "addEmbeddingModel": "Add embedding",

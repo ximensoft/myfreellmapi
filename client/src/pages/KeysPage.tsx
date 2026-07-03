@@ -433,6 +433,7 @@ function CustomProviderSection() {
   const [customType, setCustomType] = useState<'chat' | 'embedding' | 'image' | 'audio'>('chat')
   const [providerName, setProviderName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [anthropicBaseUrl, setAnthropicBaseUrl] = useState('')
   const [model, setModel] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [family, setFamily] = useState('')
@@ -459,6 +460,7 @@ function CustomProviderSection() {
       setModel('')
       setDisplayName('')
       setFamily('')
+      setAnthropicBaseUrl('')
     },
   })
 
@@ -481,6 +483,7 @@ function CustomProviderSection() {
           models,
           displayName: !multiple ? (displayName || undefined) : undefined,
           apiKey: apiKey || undefined,
+          anthropicBaseUrl: anthropicBaseUrl || undefined,
         },
       })
       return
@@ -552,6 +555,17 @@ function CustomProviderSection() {
             className="font-mono text-xs"
           />
         </div>
+        {customType === 'chat' && (
+          <div className="space-y-1.5 flex-1 min-w-[240px]">
+            <Label className="text-xs">{t('keys.customAnthropicBaseUrl')}</Label>
+            <Input
+              value={anthropicBaseUrl}
+              onChange={e => setAnthropicBaseUrl(e.target.value)}
+              placeholder={t('keys.customAnthropicBaseUrlPlaceholder')}
+              className="font-mono text-xs"
+            />
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label className="text-xs">{customType === 'chat' ? t('keys.customModels') : t('keys.customModel')}</Label>
           <Textarea

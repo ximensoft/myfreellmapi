@@ -25,6 +25,7 @@ import { extractApiToken, timingSafeStringEqual, getStickyModel, setStickyModel,
 import { getRoutingStrategy } from '../services/router.js';
 import { resolveAnthropicModel } from '../services/anthropic-map.js';
 import { buildModelListing } from '../services/model-listing.js';
+import { forwardAnthropicRequest, streamAnthropicForward, StreamForwardStarted } from '../lib/anthropic-forward.js';
 
 // Anthropic-compatible Messages API (`POST /v1/messages`). This is a thin
 // translation layer over the SAME router/fallback/analytics machinery the
@@ -403,6 +404,70 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         requestedModel: attempt === 0 ? requestedModel : undefined,
         strategy: attempt === 0 ? getRoutingStrategy() : undefined,
       });
+
+      // ── Native Anthropic forward ──────────────────────────────────────
+      // When the routed key has an Anthropic-compatible endpoint configured,
+      // forward the original wire-format body directly — bypassing the OpenAI
+      // conversion that can corrupt message ordering for strict providers
+      // (e.g. "System message must be at the beginning").
+      if (route.anthropicBaseUrl) {
+        if (stream) {
+          const { inputTokens: fwdIn, outputTokens: fwdOut } = await streamAnthropicForward(res, route, body, {
+            start, attempt, requestedModel, estimatedInputTokens, pinnedModelId,
+          });
+          recordRequest(route.platform, route.modelId, route.keyId);
+          recordTokens(route.platform, route.modelId, route.keyId, fwdIn + fwdOut);
+          recordSuccess(route.modelDbId);
+          if (!resolved.pinned) setStickyModel(messages, route.modelDbId, sessionId);
+          logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId);
+          traceRouteEvent('Anthropic', {
+            event: 'ok', requestId: `anthropic-${attempt}`, attempt,
+            platform: route.platform, model: route.modelId,
+            latencyMs: Date.now() - start, inputTokens: fwdIn, outputTokens: fwdOut,
+          });
+          return;
+        }
+
+        const fwd = await forwardAnthropicRequest(route, body);
+        const fwdIn = fwd.inputTokens || estimatedInputTokens;
+        const fwdOut = fwd.outputTokens;
+
+        // Empty response → fail over, same as the OpenAI conversion path.
+        const fwdContent = (fwd.body as any).content;
+        if ((!Array.isArray(fwdContent) || fwdContent.length === 0) && !(fwd.body as any).stop_reason) {
+          logRequest(route.platform, route.modelId, route.keyId, 'error', fwdIn, 0, Date.now() - start, 'empty completion (native anthropic forward)', null, pinnedModelId);
+          traceRouteEvent('Anthropic', {
+            event: 'fail', requestId: `anthropic-${attempt}`, attempt,
+            platform: route.platform, model: route.modelId,
+            latencyMs: Date.now() - start, error: 'empty completion (native anthropic forward)',
+          });
+          console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${attempt} - empty completion (native anthropic forward)`);
+          skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
+          setCooldown(route.platform, route.modelId, route.keyId, cooldownFor(route, {}));
+          recordRateLimitHit(route.modelDbId);
+          lastError = new Error(`empty completion from ${route.displayName}`);
+          continue;
+        }
+
+        recordRequest(route.platform, route.modelId, route.keyId);
+        recordTokens(route.platform, route.modelId, route.keyId, fwdIn + fwdOut);
+        recordSuccess(route.modelDbId);
+        if (!resolved.pinned) setStickyModel(messages, route.modelDbId, sessionId);
+
+        // Rewrite the model field to the client's requested name for consistency.
+        const responseBody = { ...fwd.body, model: requestedModel };
+        res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
+        if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
+        logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId);
+        traceRouteEvent('Anthropic', {
+          event: 'ok', requestId: `anthropic-${attempt}`, attempt,
+          platform: route.platform, model: route.modelId,
+          latencyMs: Date.now() - start, inputTokens: fwdIn, outputTokens: fwdOut,
+        });
+        res.json(responseBody);
+        return;
+      }
+
       if (stream) {
         await streamCompletion(res, route, messages, completionOptions, {
           start, attempt, requestedModel, estimatedInputTokens, tools, pinnedModelId,
@@ -481,7 +546,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         inputTokens: promptTokens,
         outputTokens: completionTokens,
       });
-      console.log(`[router] routeRequest: completed [messages] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+      //console.log(`[router] routeRequest: completed [messages] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
       res.json(anthropicResponse);
       return;
     } catch (err: any) {
@@ -491,6 +556,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       // A stream that already sent its `message_start` cannot fail over — the
       // helper finished the SSE response itself. Bubble back without retrying.
       if (err instanceof StreamAlreadyStarted) return;
+      if (err instanceof StreamForwardStarted) return;
 
       if (isRetryableError(err)) {
         traceRouteEvent('Anthropic', {
@@ -684,7 +750,7 @@ async function streamCompletion(
       inputTokens: ctx.estimatedInputTokens,
       outputTokens,
     });
-    console.log(`[router] routeRequest: completed [messages] ${route.platform}/${route.modelId} (${Date.now() - ctx.start}ms)`);
+    //console.log(`[router] routeRequest: completed [messages] ${route.platform}/${route.modelId} (${Date.now() - ctx.start}ms)`);
   } catch (err: any) {
     if (err instanceof StreamAlreadyStarted) throw err;
     if (messageStarted) {
