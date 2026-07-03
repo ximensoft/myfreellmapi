@@ -398,6 +398,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
     }
 
     try {
+      console.log(`[router] routeRequest: dispatching ${route.platform}/${route.modelId} (attempt ${attempt}, stream=${stream})`);
       traceRouteEvent('Responses', {
         event: attempt === 0 ? 'start' : 'next',
         requestId: requestGroupId,
@@ -643,6 +644,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         sse('response.completed', { response: finalResponse });
         res.end();
 
+        console.log(`[router] routeRequest: responses stream loop ended, msgText=${msgText.length}chars`);
         recordRequest(route.platform, route.modelId, route.keyId);
         recordTokens(route.platform, route.modelId, route.keyId, estimatedInputTokens + totalOutputTokens);
         recordSuccess(route.modelDbId);
