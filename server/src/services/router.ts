@@ -895,7 +895,6 @@ export function resolveFusionCandidate(modelId: string): FusionCandidate | null 
 
 export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, preferredModelDbId?: number, requireVision = false, requireTools = false, skipModels?: Set<number>, prefetchedChain?: ChainRow[]): RouteResult {
   const db = getDb();
-  const routeStartTime = Date.now();
 
   const strategy = getRoutingStrategy();
   if (strategy !== 'priority') refreshStatsCache(db);
@@ -1004,8 +1003,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     // the sorted chain for THIS request (no explicit penalty needed).
     const route = selectKeyForModel(entry, estimatedTokens, skipKeys, diag);
     if (route) {
-      const elapsed = Date.now() - routeStartTime;
-      console.log(`[router] routeRequest: selected ${route.platform}/${route.modelId} (key_id=${route.keyId}, model_db_id=${route.modelDbId}, ${elapsed}ms)`);
+      console.log(`[router] routeRequest: selected ${route.platform}/${route.modelId} (key_id=${route.keyId}, model_db_id=${route.modelDbId})`);
       return route;
     }
   }
