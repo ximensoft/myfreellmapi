@@ -461,7 +461,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
       if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
       logRequest(route.platform, route.modelId, route.keyId, 'success', promptTokens, completionTokens, Date.now() - start, null, null, pinnedModelId);
-      console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
+      //console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
       res.json(anthropicResponse);
       return;
     } catch (err: any) {
@@ -634,7 +634,7 @@ async function streamCompletion(
     recordSuccess(route.modelDbId);
     if (!ctx.pinned) setStickyModel(messages, route.modelDbId, ctx.sessionId);
     logRequest(route.platform, route.modelId, route.keyId, 'success', ctx.estimatedInputTokens, outputTokens, Date.now() - ctx.start, null, null, ctx.pinnedModelId);
-    console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - ctx.start}ms)`);
+    //console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - ctx.start}ms)`);
   } catch (err: any) {
     if (err instanceof StreamAlreadyStarted) throw err;
     if (messageStarted) {
