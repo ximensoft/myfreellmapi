@@ -1004,6 +1004,9 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     const route = selectKeyForModel(entry, estimatedTokens, skipKeys, diag);
     if (route) {
       console.log(`[router] routeRequest: selected ${route.platform}/${route.modelId} (key_id=${route.keyId}, model_db_id=${route.modelDbId})`);
+      if (diag.length > 0) {
+        console.log(`[router] routeRequest: skipped ${diag.length} model(s) before selection:\n${diag.map(d => `  · ${d}`).join('\n')}`);
+      }
       return route;
     }
   }
