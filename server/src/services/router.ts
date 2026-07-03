@@ -426,12 +426,37 @@ const GLOBAL_SORT_ALIASES: Record<string, string> = {
   balanced: 'balanced',
 };
 
+// Build the set of platforms / custom key_ids that have at least one
+// enabled+healthy key. Used to filter the chain so models whose provider
+// key is disabled ("提供商未开启") don't appear in getActiveChain logs or
+// pollute the routing loop with guaranteed-fail attempts.
+function buildKeyAvailability(db: Database): {
+  platformsWithKeys: Set<string>;
+  customKeyIdsWithAccess: Set<number>;
+  hasUsableKey: (e: ChainRow) => boolean;
+} {
+  const platformsWithKeys = new Set(
+    (db.prepare("SELECT DISTINCT platform FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown')").all() as { platform: string }[])
+      .map(r => r.platform),
+  );
+  const customKeyIdsWithAccess = new Set(
+    (db.prepare("SELECT id FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown') AND is_custom = 1").all() as { id: number }[])
+      .map(r => r.id),
+  );
+  const hasUsableKey = (e: ChainRow): boolean => {
+    if (e.is_custom === 1) return e.key_id != null && customKeyIdsWithAccess.has(e.key_id);
+    return platformsWithKeys.has(e.platform);
+  };
+  return { platformsWithKeys, customKeyIdsWithAccess, hasUsableKey };
+}
+
 function getActiveChain(db: Database): ChainRow[] {
   const strategy = getRoutingStrategy();
+  const { hasUsableKey } = buildKeyAvailability(db);
   const activeProfileSetting = db.prepare("SELECT value FROM settings WHERE key = 'active_profile_id'").get() as { value: string } | undefined;
   if (activeProfileSetting) {
     const profileId = parseInt(activeProfileSetting.value, 10);
-    const chain = db.prepare(`
+    const rawChain = db.prepare(`
       SELECT pm.model_db_id, pm.priority, pm.enabled,
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
@@ -442,6 +467,10 @@ function getActiveChain(db: Database): ChainRow[] {
       WHERE pm.profile_id = ? AND pm.enabled = 1
       ORDER BY pm.priority ASC
     `).all(profileId) as ChainRow[];
+
+    // Filter out models whose provider key is disabled ("提供商未开启") so they
+    // don't appear in logs or waste routing-loop iterations.
+    const chain = rawChain.filter(hasUsableKey);
 
     // Debug: log whether custom models are present in the active profile chain
     const customInChain = chain.filter(e => e.is_custom === 1);
@@ -464,7 +493,7 @@ function getActiveChain(db: Database): ChainRow[] {
     if (chain.length > 0) return chain;
   }
 
-  const fallbackChain = db.prepare(`
+  const rawFallbackChain = db.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
@@ -475,6 +504,8 @@ function getActiveChain(db: Database): ChainRow[] {
     WHERE fc.enabled = 1
     ORDER BY fc.priority ASC
   `).all() as ChainRow[];
+
+  const fallbackChain = rawFallbackChain.filter(hasUsableKey);
 
   console.log(`[router] getActiveChain: using fallback_config (no active profile), strategy=${strategy}, total=${fallbackChain.length}, custom=${fallbackChain.filter(e => e.is_custom === 1).length}`);
 
@@ -864,6 +895,7 @@ export function resolveFusionCandidate(modelId: string): FusionCandidate | null 
 
 export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, preferredModelDbId?: number, requireVision = false, requireTools = false, skipModels?: Set<number>, prefetchedChain?: ChainRow[]): RouteResult {
   const db = getDb();
+  const routeStartTime = Date.now();
 
   const strategy = getRoutingStrategy();
   if (strategy !== 'priority') refreshStatsCache(db);
@@ -883,18 +915,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   // instantly rejected by selectKeyForModel. Batch-query the set of platforms
   // (and custom key_ids) that have at least one enabled+healthy key so we only
   // log models that could really be routed to.
-  const platformsWithKeys = new Set(
-    (db.prepare("SELECT DISTINCT platform FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown')").all() as { platform: string }[])
-      .map(r => r.platform),
-  );
-  const customKeyIdsWithAccess = new Set(
-    (db.prepare("SELECT id FROM api_keys WHERE enabled = 1 AND status IN ('healthy', 'unknown') AND is_custom = 1").all() as { id: number }[])
-      .map(r => r.id),
-  );
-  const hasUsableKey = (e: ChainRow): boolean => {
-    if (e.is_custom === 1) return e.key_id != null && customKeyIdsWithAccess.has(e.key_id);
-    return platformsWithKeys.has(e.platform);
-  };
+  const { hasUsableKey } = buildKeyAvailability(db);
 
   const usableTop3 = sortedChain.filter(hasUsableKey).slice(0, 3);
   const top3Debug = usableTop3.length > 0
@@ -982,7 +1003,11 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     // can serve right now — in which case we fall through to the next model in
     // the sorted chain for THIS request (no explicit penalty needed).
     const route = selectKeyForModel(entry, estimatedTokens, skipKeys, diag);
-    if (route) return route;
+    if (route) {
+      const elapsed = Date.now() - routeStartTime;
+      console.log(`[router] routeRequest: selected ${route.platform}/${route.modelId} (key_id=${route.keyId}, model_db_id=${route.modelDbId}, ${elapsed}ms)`);
+      return route;
+    }
   }
 
   throw new RouteError('All models exhausted. Add more API keys or wait for rate limits to reset.', 429, diag);

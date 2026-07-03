@@ -160,10 +160,18 @@ fallbackRouter.put('/', (req: Request, res: Response) => {
   const update = db.prepare(`
     UPDATE fallback_config SET priority = ?, enabled = ? WHERE model_db_id = ?
   `);
+  // Sync enabled state to profile_models for ALL profiles, not just the
+  // active one. getActiveChain reads from profile_models when an active profile
+  // is set; without this sync, a model disabled in the fallback chain still
+  // appears in the routing chain because profile_models.enabled stays 1.
+  const updateProfileModel = db.prepare(`
+    UPDATE profile_models SET enabled = ? WHERE model_db_id = ?
+  `);
 
   const updateAll = db.transaction(() => {
     for (const entry of parsed.data) {
       update.run(entry.priority, entry.enabled ? 1 : 0, entry.modelDbId);
+      updateProfileModel.run(entry.enabled ? 1 : 0, entry.modelDbId);
     }
   });
   updateAll();

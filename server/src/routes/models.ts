@@ -146,6 +146,12 @@ modelsRouter.patch('/:id', (req: Request, res: Response) => {
     if (parsed.data.fallbackEnabled !== undefined) {
       db.prepare('UPDATE fallback_config SET enabled = ? WHERE model_db_id = ?')
         .run(parsed.data.fallbackEnabled ? 1 : 0, id);
+      // Sync enabled state to profile_models for ALL profiles. getActiveChain
+      // reads from profile_models when an active profile is set; without this
+      // sync, a model disabled via the models page still appears in the routing
+      // chain because profile_models.enabled stays 1.
+      db.prepare('UPDATE profile_models SET enabled = ? WHERE model_db_id = ?')
+        .run(parsed.data.fallbackEnabled ? 1 : 0, id);
     }
   });
   applyUpdate();
