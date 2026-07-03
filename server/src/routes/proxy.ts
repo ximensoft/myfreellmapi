@@ -747,7 +747,6 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
       return;
     }
 
-    console.log(`[router] routeRequest: dispatching ${route.platform}/${route.modelId} (attempt ${attempt}, stream=${stream})`);
     traceRouteEvent('Proxy', {
       event: attempt === 0 ? 'start' : 'next',
       requestId: requestGroupId,
@@ -805,7 +804,6 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
             throw new Error(`empty completion from ${route.displayName} (legacy stream produced no text)`);
           }
 
-          console.log(`[router] routeRequest: legacy stream loop ended, sawText=${sawText}`);
           flushHeaders();
           res.write('data: [DONE]\n\n');
           res.end();
@@ -827,7 +825,6 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
           console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {
-          console.log(`[router] routeRequest: legacy stream error - ${streamErr.message}, headerSent=${headerSent}`);
           if (headerSent) {
             console.error(`[Proxy] Mid-stream legacy completion error from ${route.displayName}:`, streamErr.message);
             const payload = { error: { message: `Provider error (${route.displayName}): stream interrupted`, type: 'stream_error' } };
@@ -1400,7 +1397,6 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
     }
 
     const modelKey = `${route.platform}:${route.modelId}`;
-    console.log(`[router] routeRequest: dispatching ${route.platform}/${route.modelId} (attempt ${attempt}, stream=${stream})`);
     traceRouteEvent('Proxy', {
       event: attempt === 0 ? 'start' : 'next',
       requestId: requestGroupId,
@@ -1573,7 +1569,6 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           }
 
           // — Stream ended cleanly (provider saw [DONE] or a finish_reason) —
-          console.log(`[router] routeRequest: stream loop ended, sawText=${headerSent}, toolCalls=${toolCallAcc.size}, finish=${upstreamFinish}`);
 
           // Assemble buffered tool calls: synthesize missing ids, repair
           // double-encoded arguments against the request's schemas, drop
@@ -1652,7 +1647,6 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           console.log(`[router] routeRequest: completed ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {
-          console.log(`[router] routeRequest: stream error - ${streamErr.message}, headerSent=${headerSent}`);
           if (headerSent) {
             // the SSE response honestly instead of leaving the client hanging.
             console.error(`[Proxy] Mid-stream error from ${route.displayName}:`, streamErr.message);
