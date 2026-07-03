@@ -419,6 +419,16 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       // Empty completion → fail over, exactly like the OpenAI route.
       if (!respText && respToolCalls.length === 0) {
         logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinnedModelId);
+        traceRouteEvent('Anthropic', {
+          event: 'fail',
+          requestId: `anthropic-${attempt}`,
+          attempt,
+          platform: route.platform,
+          model: route.modelId,
+          latencyMs: Date.now() - start,
+          error: 'empty completion (no content, no tool_calls)',
+        });
+        console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${attempt} - empty completion`);
         skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
         setCooldown(route.platform, route.modelId, route.keyId, cooldownFor(route, {}));
         recordRateLimitHit(route.modelDbId);
@@ -483,6 +493,16 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       if (err instanceof StreamAlreadyStarted) return;
 
       if (isRetryableError(err)) {
+        traceRouteEvent('Anthropic', {
+          event: 'fail',
+          requestId: `anthropic-${attempt}`,
+          attempt,
+          platform: route.platform,
+          model: route.modelId,
+          latencyMs: Date.now() - start,
+          error: safeError,
+        });
+        console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${attempt} - ${safeError}`);
         if (isModelNotFoundError(err) || isModelAccessForbiddenError(err)) skipModels.add(route.modelDbId);
         skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
         setCooldown(route.platform, route.modelId, route.keyId, cooldownFor(route, err));
@@ -494,6 +514,16 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
 
       const nonRetryStatus = isRequestValidationError(err) ? 400 : 502;
       const nonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'api_error';
+      traceRouteEvent('Anthropic', {
+        event: 'fail',
+        requestId: `anthropic-${attempt}`,
+        attempt,
+        platform: route.platform,
+        model: route.modelId,
+        latencyMs: Date.now() - start,
+        error: safeError,
+      });
+      console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${attempt} - ${safeError} (non-retryable)`);
       sendError(res, nonRetryStatus, nonRetryType, `Provider error (${route.displayName}): ${safeError}`);
       return;
     }
@@ -663,9 +693,29 @@ async function streamCompletion(
       writeSse(res, 'error', { type: 'error', error: { type: 'api_error', message: `Provider error (${route.displayName}): stream interrupted` } });
       try { res.end(); } catch { /* socket gone */ }
       logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, sanitizeProviderErrorMessage(err.message), null, ctx.pinnedModelId);
+      traceRouteEvent('Anthropic', {
+        event: 'fail',
+        requestId: `anthropic-${ctx.attempt}`,
+        attempt: ctx.attempt,
+        platform: route.platform,
+        model: route.modelId,
+        latencyMs: Date.now() - ctx.start,
+        error: sanitizeProviderErrorMessage(err.message),
+      });
+      console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${ctx.attempt} - ${sanitizeProviderErrorMessage(err.message)} (mid-stream, non-retryable)`);
       throw new StreamAlreadyStarted();
     }
     // Headers never sent — bubble to the outer loop for failover.
+    traceRouteEvent('Anthropic', {
+      event: 'fail',
+      requestId: `anthropic-${ctx.attempt}`,
+      attempt: ctx.attempt,
+      platform: route.platform,
+      model: route.modelId,
+      latencyMs: Date.now() - ctx.start,
+      error: sanitizeProviderErrorMessage(err.message),
+    });
+    console.log(`[router] routeRequest: fail [messages] ${route.platform}/${route.modelId} attempt=${ctx.attempt} - ${sanitizeProviderErrorMessage(err.message)} (pre-stream, retryable)`);
     throw err;
   }
 }
