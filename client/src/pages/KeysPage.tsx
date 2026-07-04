@@ -133,15 +133,9 @@ const PLATFORMS: { value: Platform; label: string; url: string; keyless?: boolea
 ]
 
 // 'custom' is configured through its own form (base URL + model), not the
-// generic key dropdown — but it still appears in the grouped provider list.
-// Now custom providers use user-defined platform names; keys with is_custom = true
-// are grouped under the 'custom' group in the UI.
-const CUSTOM_GROUP_PLATFORM = '__custom__'
-const CUSTOM_GROUP: { value: string; label: string; url: string } = {
-  value: CUSTOM_GROUP_PLATFORM,
-  label: 'Custom (OpenAI-compatible)',
-  url: '',
-}
+// generic key dropdown. Custom keys use user-defined platform names; they are
+// grouped by platform in the UI so each custom provider gets its own enable
+// toggle and proxy bypass switch — instead of all custom keys sharing one.
 
 const CUSTOM_MODEL_KIND_LABEL: Record<ApiKeyModel['kind'], string> = {
   chat: 'keys.customTypeChat',
@@ -909,20 +903,38 @@ export default function KeysPage() {
 
   const toggleBypass = useMutation({
     mutationFn: (platform: string) => {
-      const next = bypassPlatforms.includes(platform)
-        ? bypassPlatforms.filter(p => p !== platform)
-        : [...bypassPlatforms, platform]
+      // Bypass list is stored lowercase on the server; normalize here so
+      // toggle state stays consistent for mixed-case custom provider names.
+      const lower = platform.toLowerCase()
+      const next = bypassPlatforms.includes(lower)
+        ? bypassPlatforms.filter(p => p !== lower)
+        : [...bypassPlatforms, lower]
       return apiFetch('/api/settings/proxy', { method: 'PUT', body: JSON.stringify({ bypassPlatforms: next }) })
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['proxy-url'] }),
   })
 
-  const grouped = [...PLATFORMS, CUSTOM_GROUP].map(p => ({
+  // Build provider groups. Built-in platforms use the PLATFORMS lookup table;
+  // custom keys are grouped by their user-defined platform name so each custom
+  // provider gets its own enable toggle and proxy bypass switch.
+  const builtinGroups = PLATFORMS.map(p => ({
     ...p,
-    keys: p.value === CUSTOM_GROUP_PLATFORM
-      ? keys.filter(k => k.isCustom)
-      : keys.filter(k => k.platform === p.value && !k.isCustom),
-  })).filter(p => p.keys.length > 0)
+    keys: keys.filter(k => k.platform === p.value && !k.isCustom),
+  }))
+
+  // Custom providers: group by the actual platform value (provider name).
+  const customPlatformNames = [...new Set(
+    keys.filter(k => k.isCustom).map(k => k.platform)
+  )]
+  const customGroups = customPlatformNames.map(name => ({
+    value: name,
+    label: name,
+    url: '',
+    keys: keys.filter(k => k.platform === name && k.isCustom),
+  }))
+
+  const grouped = [...builtinGroups, ...customGroups]
+    .filter(p => p.keys.length > 0)
 
   return (
     <div>
@@ -1065,7 +1077,7 @@ export default function KeysPage() {
                         <div className="inline-flex items-center gap-1.5 ml-1">
                           <span className="text-[10px] text-muted-foreground">{t('keys.proxyToggleLabel')}</span>
                           <Switch
-                            checked={!bypassPlatforms.includes(group.value)}
+                            checked={!bypassPlatforms.includes(group.value.toLowerCase())}
                             onCheckedChange={() => toggleBypass.mutate(group.value)}
                             disabled={toggleBypass.isPending}
                           />

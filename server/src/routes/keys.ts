@@ -436,13 +436,12 @@ keysRouter.delete('/:id/cooldowns', (req: Request, res: Response) => {
   res.json({ success: true, cleared });
 });
 
-// Toggle all keys for a platform
+// Toggle all keys for a platform. Accepts built-in platform names AND
+// user-defined custom provider names (platform column on api_keys). The
+// validation checks the database instead of a hardcoded list so every custom
+// provider gets its own independent enable/disable toggle.
 keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
   const platform = req.params.platform as string;
-  if (!(PLATFORMS as readonly string[]).includes(platform)) {
-    res.status(400).json({ error: { message: `Invalid platform '${platform}'` } });
-    return;
-  }
 
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') {
@@ -451,6 +450,14 @@ keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
   }
 
   const db = getDb();
+  // Reject platform names that have zero keys in the database — prevents
+  // no-op toggles on typos or stale frontend state.
+  const exists = db.prepare('SELECT 1 FROM api_keys WHERE platform = ? LIMIT 1').get(platform);
+  if (!exists) {
+    res.status(400).json({ error: { message: `Invalid platform '${platform}'` } });
+    return;
+  }
+
   const result = db.prepare('UPDATE api_keys SET enabled = ? WHERE platform = ?').run(enabled ? 1 : 0, platform);
 
   res.json({ success: true, enabled, updatedKeys: result.changes });
