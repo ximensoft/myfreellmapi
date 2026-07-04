@@ -11,6 +11,7 @@ import { getDb, getUnifiedApiKey } from '../db/index.js';
 import { contentToString, messageHasImage, normalizeOutboundContent, sanitizeResponse } from '../lib/content.js';
 import { repairToolArguments, toolSchemaMap } from '../lib/tool-args.js';
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
+import { logForwardingError } from '../lib/error-logger.js';
 import { rescueInlineToolCalls, startsWithDialectMarker, couldBecomeDialectMarker, containsDialectMarker } from '../lib/tool-call-rescue.js';
 import { getContextHandoffMode, recordIncomingMessages, maybeInjectContextHandoff, recordSuccessfulModel, hasPriorModel, HANDOFF_MAX_TOKENS } from '../services/context-handoff.js';
 import { isFusionModel, runFusion, fusionConfigSchema, FusionError, FUSION_MODEL_ID } from '../services/fusion.js';
@@ -906,6 +907,20 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         error: safeError,
       });
       logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError, null, pinnedModelId);
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'chat/completions',
+        platform: route.platform,
+        model: route.modelId,
+        keyId: route.keyId,
+        httpStatus: typeof err?.status === 'number' ? err.status : 0,
+        errorMessage: safeError,
+        rawBody: err?.rawBody,
+        latencyMs: latency,
+        attempt,
+        retryable: isRetryableError(err),
+        requestModel: pinnedModelId,
+      });
 
       if (isRetryableError(err)) {
         if (isModelNotFoundError(err) || isModelAccessForbiddenError(err)) skipModels.add(route.modelDbId);
@@ -1781,6 +1796,20 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         error: safeError,
       });
       logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError, null, pinnedModelId);
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'chat/completions',
+        platform: route.platform,
+        model: route.modelId,
+        keyId: route.keyId,
+        httpStatus: typeof err?.status === 'number' ? err.status : 0,
+        errorMessage: safeError,
+        rawBody: err?.rawBody,
+        latencyMs: latency,
+        attempt,
+        retryable: isRetryableError(err),
+        requestModel: pinnedModelId,
+      });
 
       if (isRetryableError(err)) {
         // Model-level 404 (removed/deprecated upstream): rule the whole model

@@ -12,7 +12,7 @@
 import type { Response as ExpressResponse } from 'express';
 import type { RouteResult } from '../services/router.js';
 import { proxyFetch } from './proxy.js';
-import { providerHttpError, type ProviderHttpError } from '../providers/base.js';
+import { providerHttpError, readErrorBody, type ProviderHttpError } from '../providers/base.js';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const FORWARD_TIMEOUT_MS = 120_000;
@@ -88,14 +88,17 @@ async function parseAnthropicResponse(
   route: RouteResult,
 ): Promise<AnthropicForwardResult> {
   if (!upstream.ok) {
-    const errBody = await upstream.json().catch(() => ({}));
+    const rawBody = await readErrorBody(upstream);
+    const errBody = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
     const msg = (errBody as any)?.error?.message
       ?? (errBody as any)?.message
       ?? upstream.statusText;
-    throw providerHttpError(
+    const httpErr = providerHttpError(
       upstream,
-      `${route.platform} (anthropic) API error ${upstream.status}: ${msg}`,
+      `${route.platform} (anthropic) API error ${upstream.status}: ${msg}${rawBody && rawBody !== '{}' ? ` [raw: ${rawBody.length > 500 ? rawBody.slice(0, 500) + '…' : rawBody}]` : ''}`,
     );
+    (httpErr as any).rawBody = rawBody;
+    throw httpErr;
   }
 
   const data = await upstream.json() as Record<string, unknown>;
@@ -168,14 +171,17 @@ export async function streamAnthropicForward(
     }, route.platform);
 
     if (!upstream.ok) {
-      const errBody = await upstream.json().catch(() => ({}));
+      const rawBody = await readErrorBody(upstream);
+      const errBody = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
       const msg = (errBody as any)?.error?.message
         ?? (errBody as any)?.message
         ?? upstream.statusText;
-      throw providerHttpError(
+      const httpErr = providerHttpError(
         upstream,
-        `${route.platform} (anthropic) API error ${upstream.status}: ${msg}`,
+        `${route.platform} (anthropic) API error ${upstream.status}: ${msg}${rawBody && rawBody !== '{}' ? ` [raw: ${rawBody.length > 500 ? rawBody.slice(0, 500) + '…' : rawBody}]` : ''}`,
       );
+      (httpErr as any).rawBody = rawBody;
+      throw httpErr;
     }
 
     // Pipe the upstream SSE directly to the client, rewriting the model name

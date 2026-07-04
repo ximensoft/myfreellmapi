@@ -3,7 +3,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
 } from '@freellmapi/shared/types.js';
-import { BaseProvider, providerHttpError, type CompletionOptions } from './base.js';
+import { BaseProvider, providerHttpError, readErrorBody, type CompletionOptions } from './base.js';
 import { contentToString } from '../lib/content.js';
 import { recordQuotaObservationsFromResponse, type QuotaObservationContext } from '../services/provider-quota.js';
 
@@ -68,8 +68,12 @@ export class CloudflareProvider extends BaseProvider {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw providerHttpError(res, `Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`);
+      const rawBody = await readErrorBody(res);
+      const err = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
+      const detail = (err as any)?.error?.message ?? (err as any)?.errors?.[0]?.message ?? (err as any)?.message ?? res.statusText;
+      const httpErr = providerHttpError(res, `Cloudflare API error ${res.status}: ${detail}${rawBody && rawBody !== '{}' ? ` [raw: ${rawBody.length > 500 ? rawBody.slice(0, 500) + '…' : rawBody}]` : ''}`);
+      (httpErr as any).rawBody = rawBody;
+      throw httpErr;
     }
 
     const data = await res.json() as ChatCompletionResponse;
@@ -116,8 +120,12 @@ export class CloudflareProvider extends BaseProvider {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw providerHttpError(res, `Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`);
+      const rawBody = await readErrorBody(res);
+      const err = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
+      const detail = (err as any)?.error?.message ?? (err as any)?.errors?.[0]?.message ?? (err as any)?.message ?? res.statusText;
+      const httpErr = providerHttpError(res, `Cloudflare API error ${res.status}: ${detail}${rawBody && rawBody !== '{}' ? ` [raw: ${rawBody.length > 500 ? rawBody.slice(0, 500) + '…' : rawBody}]` : ''}`);
+      (httpErr as any).rawBody = rawBody;
+      throw httpErr;
     }
 
     yield* this.readSseStream(res);

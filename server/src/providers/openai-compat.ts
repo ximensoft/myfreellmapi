@@ -5,10 +5,56 @@ import type {
   ChatToolCall,
   Platform,
 } from '@freellmapi/shared/types.js';
-import { BaseProvider, providerHttpError, type CompletionOptions } from './base.js';
+import { BaseProvider, providerHttpError, readErrorBody, type CompletionOptions } from './base.js';
 import { rescueInlineToolCalls } from '../lib/tool-call-rescue.js';
 import { repairToolArguments, toolSchemaMap } from '../lib/tool-args.js';
 import { recordQuotaObservationsFromResponse, type QuotaObservationContext } from '../services/provider-quota.js';
+
+/**
+ * Build a human-readable error message from a provider's error response.
+ * Tries every known field providers use (error.message, error.detail,
+ * message, detail, errors[]) before falling back to the raw body text.
+ * The raw body is always included (truncated) so no detail is lost —
+ * critical for debugging opaque gateway errors like "Upstream request failed"
+ * where the real cause is in a nested field the old code didn't extract.
+ */
+function formatProviderError(
+  providerName: string,
+  status: number,
+  statusText: string,
+  errBody: any,
+  rawBody: string,
+): string {
+  const parts: string[] = [];
+
+  // Standard OpenAI format: { error: { message, type, code, detail } }
+  if (errBody?.error) {
+    if (errBody.error.message) parts.push(String(errBody.error.message));
+    if (errBody.error.detail) parts.push(`detail: ${JSON.stringify(errBody.error.detail)}`);
+    if (errBody.error.code) parts.push(`code: ${errBody.error.code}`);
+    if (errBody.error.type) parts.push(`type: ${errBody.error.type}`);
+  }
+
+  // Top-level fields some providers use instead of the error envelope
+  if (errBody?.message && !parts.length) parts.push(String(errBody.message));
+  if (errBody?.detail && !parts.length) parts.push(`detail: ${JSON.stringify(errBody.detail)}`);
+
+  // Cohere / some gateways: { errors: [{ message }] }
+  if (Array.isArray(errBody?.errors)) {
+    for (const e of errBody.errors) {
+      if (e?.message) parts.push(String(e.message));
+    }
+  }
+
+  // Fall back to statusText if nothing was extracted
+  if (!parts.length) parts.push(statusText || 'unknown error');
+
+  const detail = parts.join(' | ');
+  // Append a truncated raw body so the full upstream response is always visible
+  // — the structured extraction above can miss provider-specific fields.
+  const rawSnippet = rawBody.length > 500 ? rawBody.slice(0, 500) + '…' : rawBody;
+  return `${providerName} API error ${status}: ${detail}${rawBody && rawBody !== '{}' ? ` [raw: ${rawSnippet}]` : ''}`;
+}
 
 /**
  * Generic provider for platforms that use an OpenAI-compatible API.
@@ -132,7 +178,8 @@ export class OpenAICompatProvider extends BaseProvider {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const rawBody = await readErrorBody(res);
+      const err = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
       const rescued = this.rescueFailedGeneration(err, options);
       if (rescued) {
         console.log(`[${this.name}] Rescued ${rescued.length} inline tool call(s) from a ${res.status} tool_use_failed (#264)`);
@@ -147,7 +194,9 @@ export class OpenAICompatProvider extends BaseProvider {
         out._routed_via = { platform: this.platform, model: modelId };
         return out;
       }
-      throw providerHttpError(res, `${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      const httpErr = providerHttpError(res, formatProviderError(this.name, res.status, res.statusText, err, rawBody));
+      (httpErr as any).rawBody = rawBody;
+      throw httpErr;
     }
 
     let data: ChatCompletionResponse;
@@ -206,7 +255,8 @@ export class OpenAICompatProvider extends BaseProvider {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const rawBody = await readErrorBody(res);
+      const err = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })();
       const rescued = this.rescueFailedGeneration(err, options);
       if (rescued) {
         console.log(`[${this.name}] Rescued ${rescued.length} inline tool call(s) from a ${res.status} tool_use_failed (stream, #264)`);
@@ -216,7 +266,9 @@ export class OpenAICompatProvider extends BaseProvider {
         yield { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] };
         return;
       }
-      throw providerHttpError(res, `${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      const httpErr = providerHttpError(res, formatProviderError(this.name, res.status, res.statusText, err, rawBody));
+      (httpErr as any).rawBody = rawBody;
+      throw httpErr;
     }
 
     yield* this.readSseStream(res);

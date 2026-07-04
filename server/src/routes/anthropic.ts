@@ -19,6 +19,7 @@ import { getUnifiedApiKey } from '../db/index.js';
 import { contentToString } from '../lib/content.js';
 import { repairToolArguments, toolSchemaMap } from '../lib/tool-args.js';
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
+import { logForwardingError } from '../lib/error-logger.js';
 import { isRetryableError, isPaymentRequiredError, isModelNotFoundError, isModelAccessForbiddenError, isRequestValidationError } from '../lib/error-classify.js';
 import { logRequest } from '../lib/request-log.js';
 import { extractApiToken, timingSafeStringEqual, getStickyModel, setStickyModel, traceRouteEvent } from './proxy.js';
@@ -552,6 +553,20 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
     } catch (err: any) {
       const safeError = sanitizeProviderErrorMessage(err.message);
       logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, safeError, null, pinnedModelId);
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'messages',
+        platform: route.platform,
+        model: route.modelId,
+        keyId: route.keyId,
+        httpStatus: typeof err?.status === 'number' ? err.status : 0,
+        errorMessage: safeError,
+        rawBody: err?.rawBody,
+        latencyMs: Date.now() - start,
+        attempt,
+        retryable: !(err instanceof StreamAlreadyStarted) && !(err instanceof StreamForwardStarted) && isRetryableError(err),
+        requestModel: pinnedModelId,
+      });
 
       // A stream that already sent its `message_start` cannot fail over — the
       // helper finished the SSE response itself. Bubble back without retrying.

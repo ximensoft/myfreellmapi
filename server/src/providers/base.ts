@@ -39,6 +39,17 @@ export function providerHttpError(res: Response, message: string): ProviderHttpE
   return err;
 }
 
+/** Safely read the raw text of an upstream error response. Falls back to
+ *  JSON.stringify(res.json()) when the Response mock (in tests) lacks `.text()`,
+ *  and to '' when neither is available. Never throws. */
+export async function readErrorBody(res: Response): Promise<string> {
+  if (typeof (res as any).text === 'function') {
+    try { return await (res as any).text(); } catch { /* fall through */ }
+  }
+  try { return JSON.stringify(await res.json()); } catch { /* fall through */ }
+  return '';
+}
+
 export interface CompletionOptions {
   model?: string;
   temperature?: number;

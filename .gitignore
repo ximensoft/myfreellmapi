@@ -1,6 +1,7 @@
 node_modules/
 dist/
 server/data/
+server/logs/
 *.db
 *.db-wal
 *.db-shm
@@ -15,3 +16,4 @@ update-hermes.sh
 
 # Monetization planning — private, never committed
 monetization/
+server/data.zip

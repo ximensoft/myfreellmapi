@@ -30,6 +30,7 @@ import {
   logRequest,
 } from './proxy.js';
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
+import { logForwardingError } from '../lib/error-logger.js';
 import { inferQuotaPoolKey, type QuotaObservationContext } from '../services/provider-quota.js';
 
 export const responsesRouter = Router();
@@ -753,6 +754,19 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         error: safeError,
       });
       logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError);
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'responses',
+        platform: route.platform,
+        model: route.modelId,
+        keyId: route.keyId,
+        httpStatus: typeof err?.status === 'number' ? err.status : 0,
+        errorMessage: safeError,
+        rawBody: err?.rawBody,
+        latencyMs: latency,
+        attempt,
+        retryable: !(stream && streamStarted) && isRetryableError(err),
+      });
 
       // Mid-stream failures can't be retried (bytes already sent) — close cleanly.
       if (stream && streamStarted) {
