@@ -228,8 +228,21 @@
     "keyCountOther": "{count} 个密钥",
     "proxyEnvHintBefore": "也可通过 ",
     "proxyEnvHintAfter": " 环境变量配置（优先生效）。留空则禁用。示例：",
-    "confirmRemove": "确认？"
-  },
+"confirmRemove": "确认？",
+"test": "测试",
+"testTitle": "API 密钥测试",
+"testUrl": "API 地址",
+"testApiKey": "API 密钥",
+"testMessage": "测试消息",
+"testMessagePlaceholder": "你是哪个大模型",
+"testStart": "开始测试",
+"testRunning": "测试中…",
+"testCurl": "请求 (curl)",
+"testResponse": "响应",
+"testLatency": "耗时",
+"testStatus": "状态码",
+"testNoResponse": "无响应 — 请求失败"
+},
   "status": {
     "healthy": "健康",
     "rateLimited": "被限流",

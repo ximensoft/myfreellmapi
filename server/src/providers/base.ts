@@ -81,6 +81,11 @@ export abstract class BaseProvider {
 
   abstract validateKey(apiKey: string, quotaContext?: QuotaObservationContext): Promise<boolean>;
 
+  /** Return the provider's base URL (without trailing slash) for OpenAI-compatible
+   *  endpoints, or null for providers that use a non-standard URL scheme (Google,
+   *  Cloudflare). Used by the key test dialog to pre-fill the request URL. */
+  getBaseUrl(): string | null { return null; }
+
   protected async fetchWithTimeout(
     url: string,
     init: RequestInit,

@@ -238,6 +238,14 @@ export async function proxyFetch(url: string, init?: RequestInit, platform?: str
     return fetch(url, init);
   }
 
+  // Log proxy usage: one concise line per proxied request so the operator can
+  // see which platform/key went through the proxy and at what cost. The proxy
+  // URL is masked (credentials hidden); the target is the origin only (no path
+  // or query, to keep it short and avoid leaking request details).
+  const maskedProxy = _proxyUrl.replace(/\/\/[^@]*@/, '//***@');
+  const targetHost = (() => { try { return new URL(url).host; } catch { return url; } })();
+  console.log(`[proxy] ${platform ?? 'unknown'} → ${targetHost} via ${resolved.isSocks ? 'socks' : 'http'} proxy ${maskedProxy}`);
+
   // SOCKS proxy → http/https fallback
   if (resolved.isSocks) {
     return socksFetch(url, init, resolved.dispatcher as http.Agent);

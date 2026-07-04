@@ -91,6 +91,10 @@ export class OpenAICompatProvider extends BaseProvider {
     return this.keyless ? {} : { 'Authorization': `Bearer ${apiKey}` };
   }
 
+  /** Expose the base URL for the key test dialog. */
+  getBaseUrl(): string | null { return this.baseUrl; }
+
+
   async chatCompletion(
     apiKey: string,
     messages: ChatMessage[],

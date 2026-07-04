@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/page-header'
 import type { ApiKey, ApiKeyModel, Platform, ProviderQuotaState, KeyCooldown } from '../../../shared/types'
-import { ChevronDown, Pencil, ExternalLink, Globe, Trash2, Unlock } from 'lucide-react'
+import { ChevronDown, Pencil, ExternalLink, Globe, Trash2, Unlock, FlaskConical, X } from 'lucide-react'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 import { useI18n } from '@/i18n'
 
@@ -701,6 +701,156 @@ const KEYS_TABS: { id: KeysTab; labelKey: string }[] = [
   { id: 'anthropic', labelKey: 'keys.tabAnthropic' },
 ]
 
+// ── Key Test Dialog ────────────────────────────────────────────────────────
+interface TestResult {
+  curl: string
+  url: string
+  method: string
+  requestHeaders: Record<string, string>
+  requestBody: string
+  status: number
+  responseHeaders: Record<string, string>
+  responseBody: string
+  latencyMs: number
+}
+
+function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void }) {
+  const { t } = useI18n()
+  const [message, setMessage] = useState('你是哪个大模型')
+  const [testUrl, setTestUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [result, setResult] = useState<TestResult | null>(null)
+  const [error, setError] = useState('')
+
+  // Fetch pre-filled URL and decrypted key from the test endpoint's GET variant.
+  // We use a lightweight POST with empty body to get defaults — the backend
+  // resolves the URL and decrypts the key, then we display them as editable.
+  const { isLoading: prefetching } = useQuery<{ url: string; apiKey: string; modelId: string }>({
+    queryKey: ['key-test-prefetch', keyId],
+    queryFn: async () => {
+      const data = await apiFetch<{ url: string; apiKey: string; modelId: string }>(`/api/keys/${keyId}/test-info`)
+      setTestUrl(data.url)
+      setApiKey(data.apiKey)
+      return data
+    },
+  })
+
+  const testMutation = useMutation({
+    mutationFn: () => apiFetch<TestResult>(`/api/keys/${keyId}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined }),
+    }),
+    onSuccess: (data) => { setResult(data); setError('') },
+    onError: (err: Error) => { setError(err.message); setResult(null) },
+  })
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const statusColor = result
+    ? (result.status >= 200 && result.status < 300 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')
+    : ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl border bg-card p-6 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium flex items-center gap-2">
+            <FlaskConical className="size-4 text-muted-foreground" />
+            {t('keys.testTitle')}
+          </h2>
+          <Button variant="ghost" size="xs" onClick={onClose} className="size-7 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        {/* Input fields */}
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t('keys.testUrl')}</Label>
+            <Input
+              value={testUrl}
+              onChange={e => setTestUrl(e.target.value)}
+              placeholder="https://api.example.com/v1/chat/completions"
+              className="font-mono text-xs"
+              disabled={prefetching}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t('keys.testApiKey')}</Label>
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder="sk-…"
+              className="font-mono text-xs"
+              disabled={prefetching}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t('keys.testMessage')}</Label>
+            <Input
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              placeholder={t('keys.testMessagePlaceholder')}
+              className="text-xs"
+            />
+          </div>
+          <Button
+            size="sm"
+            onClick={() => testMutation.mutate()}
+            disabled={testMutation.isPending || prefetching || !testUrl}
+          >
+            {testMutation.isPending ? t('keys.testRunning') : t('keys.testStart')}
+          </Button>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <p className="text-destructive text-xs mt-3">{error}</p>
+        )}
+
+        {/* Results */}
+        {result && (
+          <div className="mt-4 space-y-3">
+            {/* curl */}
+            <div className="space-y-1">
+              <Label className="text-xs">{t('keys.testCurl')}</Label>
+              <pre className="rounded-xl border bg-muted/50 p-3 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                {result.curl}
+              </pre>
+            </div>
+
+            {/* Status + Latency */}
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-muted-foreground">{t('keys.testStatus')}:</span>
+              <span className={`font-mono font-medium ${statusColor}`}>{result.status || '—'}</span>
+              <span className="text-muted-foreground">{t('keys.testLatency')}:</span>
+              <span className="font-mono font-medium">{result.latencyMs}ms</span>
+            </div>
+
+            {/* Response body */}
+            <div className="space-y-1">
+              <Label className="text-xs">{t('keys.testResponse')}</Label>
+              <pre className={`rounded-xl border p-3 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all max-h-[300px] ${result.status === 0 ? 'text-muted-foreground' : ''}`}>
+                {result.responseBody || t('keys.testNoResponse')}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function KeysPage() {
   const { t } = useI18n()
   const queryClient = useQueryClient()
@@ -718,6 +868,7 @@ export default function KeysPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [confirmDeleteModelKey, setConfirmDeleteModelKey] = useState<string | null>(null)
   const [expandedKeyIds, setExpandedKeyIds] = useState<Set<number>>(new Set())
+const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
 
   const { data: keys = [], isLoading } = useQuery<ApiKey[]>({
     queryKey: ['keys'],
@@ -1131,12 +1282,15 @@ export default function KeysPage() {
                                 {formatSqliteUtcToLocalTime(lastChecked, { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             )}
-                            <Button variant="ghost" size="xs" onClick={() => isEditing ? cancelEditing() : startEditing(k)}>
-                              <Pencil className="size-3" />
-                            </Button>
-                            <Button variant="ghost" size="xs" onClick={() => checkKey.mutate(k.id)} disabled={checkKey.isPending}>
-                              {t('common.check')}
-                            </Button>
+<Button variant="ghost" size="xs" onClick={() => isEditing ? cancelEditing() : startEditing(k)}>
+<Pencil className="size-3" />
+</Button>
+<Button variant="ghost" size="xs" onClick={() => checkKey.mutate(k.id)} disabled={checkKey.isPending}>
+{t('common.check')}
+</Button>
+<Button variant="ghost" size="xs" onClick={() => setTestingKeyId(k.id)} title={t('keys.test')}>
+<FlaskConical className="size-3" />
+</Button>
                             <Button
                               variant="ghost"
                               size="xs"
@@ -1285,6 +1439,9 @@ export default function KeysPage() {
         </>
         )}
       </div>
+      {testingKeyId != null && (
+        <KeyTestDialog keyId={testingKeyId} onClose={() => setTestingKeyId(null)} />
+      )}
     </div>
   )
 }

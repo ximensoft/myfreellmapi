@@ -5,6 +5,7 @@ import { getDb } from '../db/index.js';
 import { hasProvider, resolveProvider } from '../providers/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
 import { getActiveCooldownsForKeys, clearCooldownsForKey } from '../services/ratelimit.js';
+import { proxyFetch } from '../lib/proxy.js';
 
 export const keysRouter = Router();
 
@@ -518,4 +519,161 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
   if (enabled !== undefined) response.enabled = enabled;
   if (label !== undefined) response.label = label;
   res.json(response);
+});
+
+// ── Key test endpoint (#test) ─────────────────────────────────────────────
+// Returns the pre-filled URL, decrypted API key, and default model for the
+// test dialog. The key is sent to the frontend so the user can see and edit
+// it — this is the same trust boundary as the health check (which also
+// decrypts and uses the key), restricted to the authenticated dashboard.
+keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: { message: 'Invalid key ID' } });
+    return;
+  }
+
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as any;
+  if (!row) {
+    res.status(404).json({ error: { message: 'Key not found' } });
+    return;
+  }
+
+  const provider = resolveProvider(row.platform, row.base_url);
+  const providerBaseUrl = provider?.getBaseUrl() ?? null;
+  const url = providerBaseUrl
+    ? `${providerBaseUrl}/chat/completions`
+    : (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/chat/completions` : '');
+
+  let apiKey = '';
+  try {
+    apiKey = decrypt(row.encrypted_key, row.iv, row.auth_tag);
+  } catch {
+    apiKey = '';
+  }
+
+  const modelRow = db.prepare('SELECT model_id FROM models WHERE platform = ? AND enabled = 1 ORDER BY id LIMIT 1').get(row.platform) as { model_id: string } | undefined;
+
+  res.json({ url, apiKey, modelId: modelRow?.model_id ?? '' });
+});
+
+// Sends a minimal chat completion directly to the provider's endpoint using
+// the stored (or user-overridden) API key, and returns the raw request (as a
+// curl command), the response body, HTTP status, and latency. This bypasses
+// the router entirely — no rate-limit accounting, no cooldown, no fallback —
+// it's a diagnostic tool, not a routed request.
+const testKeySchema = z.object({
+  message: z.string().default('你是哪个大模型'),
+  modelId: z.string().optional(),
+  apiKey: z.string().optional(),
+  url: z.string().url().optional(),
+});
+
+keysRouter.post('/:id/test', async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: { message: 'Invalid key ID' } });
+    return;
+  }
+
+  const parsed = testKeySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: parsed.error.errors.map(e => e.message).join(', ') } });
+    return;
+  }
+
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as any;
+  if (!row) {
+    res.status(404).json({ error: { message: 'Key not found' } });
+    return;
+  }
+
+  // Resolve provider to discover the default chat endpoint URL.
+  const provider = resolveProvider(row.platform, row.base_url);
+  const providerBaseUrl = provider?.getBaseUrl() ?? null;
+
+  // Determine the target URL: user override > provider base URL > custom base_url.
+  const targetUrl = parsed.data.url?.trim()
+    || (providerBaseUrl ? `${providerBaseUrl}/chat/completions` : null)
+    || (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/chat/completions` : null);
+
+  if (!targetUrl) {
+    res.status(400).json({ error: { message: `Cannot determine chat completion URL for platform '${row.platform}'. Please provide a URL manually.` } });
+    return;
+  }
+
+  // Decrypt the stored key (or use the user-provided override).
+  let apiKey: string;
+  try {
+    apiKey = parsed.data.apiKey?.trim() || decrypt(row.encrypted_key, row.iv, row.auth_tag);
+  } catch {
+    res.status(400).json({ error: { message: 'Failed to decrypt stored API key. Provide an apiKey in the request body.' } });
+    return;
+  }
+
+  // Find a model to test with: user override > first model for this platform.
+  let modelId = parsed.data.modelId?.trim();
+  if (!modelId) {
+    const modelRow = db.prepare('SELECT model_id FROM models WHERE platform = ? AND enabled = 1 ORDER BY id LIMIT 1').get(row.platform) as { model_id: string } | undefined;
+    modelId = modelRow?.model_id;
+  }
+  if (!modelId) {
+    res.status(400).json({ error: { message: `No enabled model found for platform '${row.platform}'. Specify a modelId.` } });
+    return;
+  }
+
+  // Build a standard OpenAI-compatible request body.
+  const body = JSON.stringify({
+    model: modelId,
+    messages: [{ role: 'user', content: parsed.data.message }],
+    max_tokens: 256,
+  });
+
+  // Build headers — Authorization: Bearer is the universal default.
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Build the curl command for display.
+  const curlHeaderFlags = Object.entries(headers)
+    .map(([k, v]) => `-H '${k}: ${v}'`)
+    .join(' \\\n  ');
+  const curl = `curl -X POST '${targetUrl}' \\\n  ${curlHeaderFlags} \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
+
+  // Send the request through proxyFetch so the proxy bypass list is respected.
+  const start = Date.now();
+  let status = 0;
+  let responseBody = '';
+  let responseHeaders: Record<string, string> = {};
+  try {
+    const upstreamRes = await proxyFetch(targetUrl, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(60_000),
+    }, row.platform);
+
+    status = upstreamRes.status;
+    upstreamRes.headers.forEach((v, k) => { responseHeaders[k] = v; });
+    responseBody = await upstreamRes.text();
+  } catch (err: any) {
+    responseBody = JSON.stringify({ error: err.message });
+    status = 0;
+  }
+  const latencyMs = Date.now() - start;
+
+  res.json({
+    curl,
+    url: targetUrl,
+    method: 'POST',
+    requestHeaders: headers,
+    requestBody: body,
+    status,
+    responseHeaders,
+    responseBody,
+    latencyMs,
+  });
 });

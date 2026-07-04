@@ -284,7 +284,20 @@
     "keyCountOther": "{count} keys",
     "proxyEnvHintBefore": "Also configurable via the ",
     "proxyEnvHintAfter": " environment variable (takes precedence). Leave blank to disable. Examples:",
-    "confirmRemove": "Confirm?"
+    "confirmRemove": "Confirm?",
+    "test": "Test",
+    "testTitle": "API Key Test",
+    "testUrl": "API URL",
+    "testApiKey": "API Key",
+    "testMessage": "Test message",
+    "testMessagePlaceholder": "你是哪个大模型",
+    "testStart": "Start Test",
+    "testRunning": "Testing…",
+    "testCurl": "Request (curl)",
+    "testResponse": "Response",
+    "testLatency": "Latency",
+    "testStatus": "Status",
+    "testNoResponse": "No response — request failed"
   },
   "status": {
     "healthy": "healthy",
