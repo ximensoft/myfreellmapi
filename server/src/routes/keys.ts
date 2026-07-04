@@ -5,7 +5,7 @@ import { getDb } from '../db/index.js';
 import { hasProvider, resolveProvider } from '../providers/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
 import { getActiveCooldownsForKeys, clearCooldownsForKey } from '../services/ratelimit.js';
-import { proxyFetch } from '../lib/proxy.js';
+import { proxyFetch, getProxyUrl, isProxyEnabled, getProxyBypassPlatforms } from '../lib/proxy.js';
 
 export const keysRouter = Router();
 
@@ -641,7 +641,22 @@ keysRouter.post('/:id/test', async (req: Request, res: Response) => {
   const curlHeaderFlags = Object.entries(headers)
     .map(([k, v]) => `-H '${k}: ${v}'`)
     .join(' \\\n  ');
-  const curl = `curl -X POST '${targetUrl}' \\\n  ${curlHeaderFlags} \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
+
+  // Check if this request will go through the proxy: proxy must be enabled,
+  // a proxy URL must be configured, and the platform must NOT be in the bypass list.
+  const proxyUrl = getProxyUrl();
+  const proxyEnabled = isProxyEnabled();
+  const bypassList = new Set(getProxyBypassPlatforms().map(p => p.toLowerCase()));
+  const usesProxy = proxyEnabled && !!proxyUrl && !bypassList.has(row.platform.toLowerCase());
+  // Mask credentials in the proxy URL for display.
+  const maskedProxyUrl = proxyUrl ? proxyUrl.replace(/\/\/[^@]*@/, '//***@') : '';
+
+  const curlParts = [`curl -X POST '${targetUrl}'`, curlHeaderFlags];
+  if (usesProxy) {
+    curlParts.push(`-x '${maskedProxyUrl}'`);
+  }
+  curlParts.push(`-d '${body.replace(/'/g, "'\\''")}'`);
+  const curl = curlParts.join(' \\\n  ');
 
   // Send the request through proxyFetch so the proxy bypass list is respected.
   const start = Date.now();

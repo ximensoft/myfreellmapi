@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/page-header'
 import type { ApiKey, ApiKeyModel, Platform, ProviderQuotaState, KeyCooldown } from '../../../shared/types'
-import { ChevronDown, Pencil, ExternalLink, Globe, Trash2, Unlock, FlaskConical, X } from 'lucide-react'
+import { ChevronDown, Pencil, ExternalLink, Globe, Trash2, Unlock, X } from 'lucide-react'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 import { useI18n } from '@/i18n'
 
@@ -763,8 +763,7 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium flex items-center gap-2">
-            <FlaskConical className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-medium">
             {t('keys.testTitle')}
           </h2>
           <Button variant="ghost" size="xs" onClick={onClose} className="size-7 p-0">
@@ -1289,7 +1288,7 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
 {t('common.check')}
 </Button>
 <Button variant="ghost" size="xs" onClick={() => setTestingKeyId(k.id)} title={t('keys.test')}>
-<FlaskConical className="size-3" />
+{t('keys.test')}
 </Button>
                             <Button
                               variant="ghost"
