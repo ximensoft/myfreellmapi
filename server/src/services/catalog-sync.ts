@@ -60,6 +60,9 @@ const SETTING_APPLIED_JSON = 'catalog_applied_json';
 const SETTING_LAST_SYNC_MS = 'catalog_last_sync_ms';
 const SETTING_LAST_ERROR = 'catalog_last_error';
 
+/** DB setting key for the auto-sync toggle. Default: unset (disabled). */
+export const SETTING_AUTO_SYNC_ENABLED = 'catalog_auto_sync_enabled';
+
 export function catalogBaseUrl(): string {
   return (process.env.CATALOG_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
 }
@@ -448,6 +451,7 @@ export interface CatalogSyncState {
   appliedTier: string | null;
   lastSyncMs: number | null;
   lastError: string | null;
+  autoSyncEnabled: boolean;
 }
 
 export function getSyncState(): CatalogSyncState {
@@ -457,6 +461,7 @@ export function getSyncState(): CatalogSyncState {
     appliedTier: getSetting(SETTING_APPLIED_TIER) ?? null,
     lastSyncMs: Number(getSetting(SETTING_LAST_SYNC_MS)) || null,
     lastError: getSetting(SETTING_LAST_ERROR) || null,
+    autoSyncEnabled: isAutoSyncEnabled(),
   };
 }
 
@@ -498,14 +503,32 @@ export function reapplyCachedCatalog(): { reapplied: boolean; version?: string }
 
 let cancelBootTimer: (() => void) | null = null;
 let cancelInterval: (() => void) | null = null;
+let storedScheduler: Scheduler | null = null;
 
-export function startCatalogSync(scheduler: Scheduler): void {
-  if (cancelInterval) return;
-  if (process.env.CATALOG_SYNC_DISABLED === '1') {
-    console.log('[catalog-sync] disabled via CATALOG_SYNC_DISABLED=1');
-    return;
+/** Whether automatic catalog polling is enabled (DB setting, default: false). */
+export function isAutoSyncEnabled(): boolean {
+  return getSetting(SETTING_AUTO_SYNC_ENABLED) === '1';
+}
+
+/**
+ * Toggle automatic catalog sync at runtime.
+ *
+ * When enabling, starts the polling timers immediately (the scheduler from the
+ * last `startCatalogSync` call is reused). When disabling, cancels the active
+ * timers. The DB setting persists across restarts.
+ */
+export function setAutoSyncEnabled(enabled: boolean): void {
+  setSetting(SETTING_AUTO_SYNC_ENABLED, enabled ? '1' : '0');
+  if (enabled) {
+    if (storedScheduler && !cancelInterval) {
+      startPolling(storedScheduler);
+    }
+  } else {
+    stopCatalogSync();
   }
-  reapplyCachedCatalog();
+}
+
+function startPolling(scheduler: Scheduler): void {
   const run = () => {
     void refreshLicenseStatus();
     void syncCatalog();
@@ -513,6 +536,27 @@ export function startCatalogSync(scheduler: Scheduler): void {
   cancelBootTimer = scheduler.after(BOOT_DELAY_MS, run);
   cancelInterval = scheduler.every(SYNC_INTERVAL_MS, run);
   console.log(`[catalog-sync] polling ${catalogBaseUrl()} every ${SYNC_INTERVAL_MS / 3600000}h`);
+}
+
+export function startCatalogSync(scheduler: Scheduler): void {
+  if (cancelInterval) return;
+  storedScheduler = scheduler;
+
+  // Always re-apply the cached catalog on boot — this is a local, offline
+  // operation that restores the last-known state over the migration baseline.
+  reapplyCachedCatalog();
+
+  if (process.env.CATALOG_SYNC_DISABLED === '1') {
+    console.log('[catalog-sync] disabled via CATALOG_SYNC_DISABLED=1');
+    return;
+  }
+
+  if (!isAutoSyncEnabled()) {
+    console.log('[catalog-sync] auto-sync is off (enable it in Settings → Premium)');
+    return;
+  }
+
+  startPolling(scheduler);
 }
 
 export function stopCatalogSync(): void {

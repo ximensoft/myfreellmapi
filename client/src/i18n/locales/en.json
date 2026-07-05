@@ -457,7 +457,9 @@
     "upsellDescription": "New free models the moment they exist, instead of on the 1st of the month. One key, every device. Cancel anytime; the router stays free forever.",
     "goPremium": "Go Premium",
     "bundled": "bundled",
-    "planGeneric": "Premium"
+    "planGeneric": "Premium",
+    "autoSyncTitle": "Automatic catalog sync",
+    "autoSyncDescription": "When on, the app polls the catalog service twice a day for model updates. Off by default — use \"Check for updates\" to sync manually."
   },
   "languages": {
     "en": "English",

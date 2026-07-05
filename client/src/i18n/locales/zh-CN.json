@@ -398,7 +398,9 @@
     "upsellDescription": "新免费模型上线即用，无需等待每月 1 日更新。一个密钥，所有设备。随时取消，路由器永久免费。",
     "goPremium": "升级到高级版",
     "bundled": "内置",
-    "planGeneric": "Premium"
+    "planGeneric": "Premium",
+    "autoSyncTitle": "自动同步目录",
+    "autoSyncDescription": "开启后,应用每天两次自动拉取目录服务的模型更新。默认关闭 — 可使用「检查更新」手动同步。"
   },
   "languages": {
     "en": "English",

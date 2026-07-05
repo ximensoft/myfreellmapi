@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
 
 interface LicenseStatus {
@@ -25,6 +26,7 @@ interface CatalogSyncState {
   appliedTier: string | null
   lastSyncMs: number | null
   lastError: string | null
+  autoSyncEnabled: boolean
 }
 
 interface PremiumStatus {
@@ -87,6 +89,14 @@ export default function PremiumPage() {
     },
   })
 
+  const toggleAutoSync = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiFetch('/api/premium/auto-sync', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['premium'] })
+    },
+  })
+
   if (isLoading || !data) {
     return (
       <div>
@@ -136,6 +146,17 @@ export default function PremiumPage() {
             {catalog.lastError && (
               <p className="text-destructive text-xs mt-2">{t('premium.lastSyncProblem', { error: catalog.lastError })}</p>
             )}
+            <div className="flex items-center justify-between gap-3 mt-4 pt-4 border-t">
+              <div>
+                <p className="text-sm font-medium">{t('premium.autoSyncTitle')}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{t('premium.autoSyncDescription')}</p>
+              </div>
+              <Switch
+                checked={catalog.autoSyncEnabled}
+                onCheckedChange={(checked) => toggleAutoSync.mutate(checked === true)}
+                disabled={toggleAutoSync.isPending}
+              />
+            </div>
           </div>
         </section>
 

@@ -8,6 +8,7 @@ import {
   getCachedLicenseStatus,
   getSyncState,
   refreshLicenseStatus,
+  setAutoSyncEnabled,
   syncCatalog,
 } from '../services/catalog-sync.js';
 
@@ -94,6 +95,13 @@ premiumRouter.post('/sync', async (_req: Request, res: Response) => {
   await refreshLicenseStatus();
   const sync = await syncCatalog(true);
   res.json({ ...statusPayload(), sync });
+});
+
+/** PUT /api/premium/auto-sync { enabled } — toggle automatic catalog polling. */
+premiumRouter.put('/auto-sync', (req: Request, res: Response) => {
+  const enabled = req.body?.enabled === true;
+  setAutoSyncEnabled(enabled);
+  res.json(statusPayload());
 });
 
 /**
