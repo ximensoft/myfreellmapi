@@ -235,6 +235,7 @@
   "analytics": {
     "title": "Analytique",
     "description": "Volume de requêtes, latence, consommation de tokens et échecs.",
+    "rangeToday": "Aujourd'hui",
     "range24h": "24 h",
     "range7d": "7 j",
     "range30d": "30 j",
@@ -258,6 +259,7 @@
     "savingsHintExact": "Vous avez réellement économisé {actual} $ sur les {range} derniers. C'est ce que les mêmes tokens auraient coûté sur des API payantes, tarifés par modèle. Le chiffre affiché est votre total réel sur 30 jours.",
     "requestsHintPinned": "{pinned} de ces requêtes ont épinglé un modèle précis par son nom. {honored} ont été traitées par le modèle épinglé ; {failed} ont basculé vers un autre. Les autres ont été routées automatiquement.",
     "requestsHintAuto": "Toutes les requêtes de cette période ont été routées automatiquement ; aucun client n'a épinglé de modèle précis par son nom.",
+    "rangeLabelToday": "aujourd'hui",
     "rangeLabel24h": "24 heures",
     "rangeLabel7d": "7 jours",
     "rangeLabel30d": "30 jours",

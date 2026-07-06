@@ -10,10 +10,25 @@ const toSqliteDateTime = (timestamp: number) =>
     new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ');
 
 // Return the rolling cutoff timestamp for the selected analytics range.
-function getSinceTimestamp(range: string): string {
+// `tzOffsetMinutes` comes from the client's `getTimezoneOffset()` and is only
+// needed for the 'today' range, where the start of the user's calendar day
+// depends on their timezone (UTC+8 → local midnight is 16:00 UTC the previous
+// day). Rolling windows (24h/7d/30d) are timezone-independent.
+function getSinceTimestamp(range: string, tzOffsetMinutes?: number): string {
   const now = Date.now();
 
   switch (range) {
+    case 'today': {
+      // getTimezoneOffset() returns minutes that local is BEHIND UTC:
+      // UTC+8 → -480, UTC-5 → 300.
+      // 1. Shift the UTC instant to the user's local clock reading.
+      // 2. Floor to local midnight.
+      // 3. Convert back to a real UTC instant.
+      const offsetMs = (tzOffsetMinutes ?? 0) * 60 * 1000;
+      const localNow = now - offsetMs;
+      const localMidnight = Math.floor(localNow / 86_400_000) * 86_400_000;
+      return toSqliteDateTime(localMidnight + offsetMs);
+    }
     case '24h':
       return toSqliteDateTime(now - 24 * 60 * 60 * 1000);
     case '30d':
@@ -24,10 +39,17 @@ function getSinceTimestamp(range: string): string {
   }
 }
 
+// Extract range + timezone offset from the request and compute the `since`
+// cutoff in one step so every route handler stays consistent.
+function getSinceFromQuery(req: Request): { range: string; since: string } {
+  const range = (req.query.range as string) ?? '7d';
+  const tzOffset = req.query.tzOffset !== undefined ? Number(req.query.tzOffset) : undefined;
+  return { range, since: getSinceTimestamp(range, tzOffset) };
+}
+
 // Summary stats
 analyticsRouter.get('/summary', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+  const { since } = getSinceFromQuery(req);
   const db = getDb();
 
   // Savings are priced per request at the served model's paid-equivalent
@@ -77,8 +99,7 @@ analyticsRouter.get('/summary', (req: Request, res: Response) => {
 
 // Stats grouped by model
 analyticsRouter.get('/by-model', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+  const { since } = getSinceFromQuery(req);
   const db = getDb();
 
   const rows = db.prepare(`
@@ -120,8 +141,7 @@ analyticsRouter.get('/by-model', (req: Request, res: Response) => {
 
 // Stats grouped by platform
 analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+  const { since } = getSinceFromQuery(req);
   const db = getDb();
 
   const rows = db.prepare(`
@@ -150,9 +170,8 @@ analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
 
 // Timeline data
 analyticsRouter.get('/timeline', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const interval = (req.query.interval as string) ?? (range === '24h' ? 'hour' : 'day');
-  const since = getSinceTimestamp(range);
+  const { range, since } = getSinceFromQuery(req);
+  const interval = (req.query.interval as string) ?? (range === '24h' || range === 'today' ? 'hour' : 'day');
   const db = getDb();
 
   // dateFormat is a hardcoded whitelist — never user-controlled.
@@ -180,8 +199,7 @@ analyticsRouter.get('/timeline', (req: Request, res: Response) => {
 
 // Error distribution (grouped by error type and platform)
 analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+  const { since } = getSinceFromQuery(req);
   const db = getDb();
 
   // Group errors by category (extract the key part of the error message)
@@ -244,8 +262,7 @@ analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
 
 // Recent errors
 analyticsRouter.get('/errors', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+  const { since } = getSinceFromQuery(req);
   const db = getDb();
 
   const rows = db.prepare(`

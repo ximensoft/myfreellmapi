@@ -253,6 +253,7 @@
   "analytics": {
     "title": "Analisi",
     "description": "Volume richieste, latenza, utilizzo token ed errori.",
+    "rangeToday": "Oggi",
     "range24h": "24h",
     "range7d": "7g",
     "range30d": "30g",
@@ -276,6 +277,7 @@
     "savingsHintExact": "Hai effettivamente risparmiato ${actual} negli ultimi {range}. Questo è quanto gli stessi token sarebbero costati su API a pagamento, prezzate per modello. Il numero mostrato è il tuo totale reale di 30 giorni.",
     "requestsHintPinned": "{pinned} di queste richieste hanno fissato un modello specifico per nome. {honored} sono state servite dal modello fissato; {failed} sono cadute in fallback su uno diverso. Le restanti sono state instradate automaticamente.",
     "requestsHintAuto": "Tutte le richieste in questo periodo sono state instradate automaticamente; nessun client ha fissato un modello specifico per nome.",
+    "rangeLabelToday": "oggi",
     "rangeLabel24h": "24 ore",
     "rangeLabel7d": "7 giorni",
     "rangeLabel30d": "30 giorni",

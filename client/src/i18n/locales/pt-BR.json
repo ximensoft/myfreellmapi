@@ -235,6 +235,7 @@
   "analytics": {
     "title": "Análises",
     "description": "Volume de solicitações, latência, consumo de tokens e falhas.",
+    "rangeToday": "Hoje",
     "range24h": "24 h",
     "range7d": "7 d",
     "range30d": "30 d",
@@ -258,6 +259,7 @@
     "savingsHintExact": "Você economizou de fato {actual} $ nos últimos {range}. É quanto os mesmos tokens teriam custado em APIs pagas, com preço por modelo. O número exibido é o seu total real de 30 dias.",
     "requestsHintPinned": "{pinned} destas solicitações fixaram um modelo específico pelo nome. {honored} foram atendidas pelo modelo fixado; {failed} fizeram fallback para outro. As demais foram roteadas automaticamente.",
     "requestsHintAuto": "Todas as solicitações deste período foram roteadas automaticamente; nenhum cliente fixou um modelo específico pelo nome.",
+    "rangeLabelToday": "hoje",
     "rangeLabel24h": "24 horas",
     "rangeLabel7d": "7 dias",
     "rangeLabel30d": "30 dias",

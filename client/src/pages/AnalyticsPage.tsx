@@ -12,7 +12,7 @@ import { Tooltip as HoverTooltip } from '@/components/tooltip'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 import { useI18n } from '@/i18n'
 
-type TimeRange = '24h' | '7d' | '30d'
+type TimeRange = 'today' | '24h' | '7d' | '30d'
 
 function formatTokens(n?: number): string {
   if (!n) return '0'
@@ -50,36 +50,47 @@ const primaryFill = 'var(--foreground)'
 
 export default function AnalyticsPage() {
   const { t } = useI18n()
-  const [range, setRange] = useState<TimeRange>('7d')
+  const [range, setRange] = useState<TimeRange>('today')
+
+  // Get the timezone offset for 'today' range (required for computing local midnight).
+  // getTimezoneOffset() returns minutes BEHIND UTC: UTC+8 → -480, UTC-5 → 300.
+  const tzOffset = new Date().getTimezoneOffset()
+
+  const buildQuery = (path: string) => {
+    const q = range === 'today'
+      ? `range=today&tzOffset=${tzOffset}`
+      : `range=${range}`
+    return `${path}?${q}`
+  }
 
   const { data: summary } = useQuery({
-    queryKey: ['analytics', 'summary', range],
-    queryFn: () => apiFetch<any>(`/api/analytics/summary?range=${range}`),
+    queryKey: ['analytics', 'summary', range, tzOffset],
+    queryFn: () => apiFetch<any>(buildQuery('/api/analytics/summary')),
   })
 
   const { data: byPlatform = [] } = useQuery({
-    queryKey: ['analytics', 'by-platform', range],
-    queryFn: () => apiFetch<any[]>(`/api/analytics/by-platform?range=${range}`),
+    queryKey: ['analytics', 'by-platform', range, tzOffset],
+    queryFn: () => apiFetch<any[]>(buildQuery('/api/analytics/by-platform')),
   })
 
   const { data: timeline = [] } = useQuery({
-    queryKey: ['analytics', 'timeline', range],
-    queryFn: () => apiFetch<any[]>(`/api/analytics/timeline?range=${range}`),
+    queryKey: ['analytics', 'timeline', range, tzOffset],
+    queryFn: () => apiFetch<any[]>(buildQuery('/api/analytics/timeline')),
   })
 
   const { data: byModel = [] } = useQuery({
-    queryKey: ['analytics', 'by-model', range],
-    queryFn: () => apiFetch<any[]>(`/api/analytics/by-model?range=${range}`),
+    queryKey: ['analytics', 'by-model', range, tzOffset],
+    queryFn: () => apiFetch<any[]>(buildQuery('/api/analytics/by-model')),
   })
 
   const { data: errors = [] } = useQuery({
-    queryKey: ['analytics', 'errors', range],
-    queryFn: () => apiFetch<any[]>(`/api/analytics/errors?range=${range}`),
+    queryKey: ['analytics', 'errors', range, tzOffset],
+    queryFn: () => apiFetch<any[]>(buildQuery('/api/analytics/errors')),
   })
 
   const { data: errorDist } = useQuery({
-    queryKey: ['analytics', 'error-distribution', range],
-    queryFn: () => apiFetch<{ byCategory: any[]; byPlatform: any[]; detailed: any[] }>(`/api/analytics/error-distribution?range=${range}`),
+    queryKey: ['analytics', 'error-distribution', range, tzOffset],
+    queryFn: () => apiFetch<{ byCategory: any[]; byPlatform: any[]; detailed: any[] }>(buildQuery('/api/analytics/error-distribution')),
   })
 
   // Savings card shows ONE stable monthly figure regardless of the selected
@@ -91,7 +102,7 @@ export default function AnalyticsPage() {
   // with the 30d tab.
   const { data: summary30 } = useQuery({
     queryKey: ['analytics', 'summary', '30d'],
-    queryFn: () => apiFetch<any>(`/api/analytics/summary?range=30d`),
+    queryFn: () => apiFetch<any>('/api/analytics/summary?range=30d'),
   })
   const actualSavings = summary?.estimatedCostSavings ?? 0
   const baseSavings = summary30?.estimatedCostSavings ?? 0
@@ -105,7 +116,10 @@ export default function AnalyticsPage() {
   })()
   const extrapolated = spanDays < 29.5
   const savings30d = extrapolated ? baseSavings * (30 / spanDays) : baseSavings
-  const rangeLabel = range === '24h' ? t('analytics.rangeLabel24h') : range === '7d' ? t('analytics.rangeLabel7d') : t('analytics.rangeLabel30d')
+  const rangeLabel = range === 'today' ? t('analytics.rangeLabelToday')
+    : range === '24h' ? t('analytics.rangeLabel24h')
+      : range === '7d' ? t('analytics.rangeLabel7d')
+        : t('analytics.rangeLabel30d')
   const spanLabel = spanDays >= 2 ? t('analytics.spanDays', { count: Math.round(spanDays) }) : t('analytics.spanHours', { count: Math.max(1, Math.round(spanDays * 24)) })
   const savingsHint = extrapolated
     ? t('analytics.savingsHint', { actual: actualSavings.toFixed(2), range: rangeLabel, span: spanLabel })
@@ -119,6 +133,34 @@ export default function AnalyticsPage() {
     ? t('analytics.requestsHintPinned', { pinned, honored: pinHonored, failed: pinned - pinHonored })
     : t('analytics.requestsHintAuto')
 
+  // Timeline format: hourly (for 'today' and '24h') or daily (for '7d' and '30d').
+  const isHourly = range === 'today' || range === '24h'
+
+  // Convert UTC timestamp to local time for display. The server returns:
+  // - Hourly: "2026-07-06T14:00:00" (UTC, no 'Z')
+  // - Daily: "2026-07-06" (UTC, no 'Z')
+  const formatTimelineTick = (value: string): string => {
+    const iso = value.includes('T') ? value + 'Z' : value + 'T00:00:00Z'
+    const date = new Date(iso)
+    if (isNaN(date.getTime())) return value
+    const mm = String(date.getMonth() + 1).padStart(2, '0')
+    const dd = String(date.getDate()).padStart(2, '0')
+    if (isHourly) {
+      const hh = String(date.getHours()).padStart(2, '0')
+      return `${mm}/${dd} ${hh}:00`
+    }
+    return `${mm}/${dd}`
+  }
+
+  const formatTooltipLabel = (value: string): string => {
+    const iso = value.includes('T') ? value + 'Z' : value + 'T00:00:00Z'
+    const date = new Date(iso)
+    if (isNaN(date.getTime())) return value
+    return isHourly
+      ? date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : date.toLocaleDateString([], { month: '2-digit', day: '2-digit' })
+  }
+
   return (
     <div>
       <PageHeader
@@ -126,14 +168,14 @@ export default function AnalyticsPage() {
         description={t('analytics.description')}
         actions={
           <div className="flex gap-1 rounded-lg border p-0.5">
-            {(['24h', '7d', '30d'] as TimeRange[]).map(r => (
+            {(['today', '24h', '7d', '30d'] as TimeRange[]).map(r => (
               <Button
                 key={r}
                 variant={range === r ? 'secondary' : 'ghost'}
                 size="xs"
                 onClick={() => setRange(r)}
               >
-                {t(r === '24h' ? 'analytics.range24h' : r === '7d' ? 'analytics.range7d' : 'analytics.range30d')}
+                {t(r === 'today' ? 'analytics.rangeToday' : r === '24h' ? 'analytics.range24h' : r === '7d' ? 'analytics.range7d' : 'analytics.range30d')}
               </Button>
             ))}
           </div>
@@ -196,9 +238,9 @@ export default function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height={240}>
                   <LineChart data={timeline} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="2 4" stroke={gridStyle} />
-                    <XAxis dataKey="timestamp" tick={axisStyle} tickLine={false} axisLine={{ stroke: gridStyle }} />
+                    <XAxis dataKey="timestamp" tick={axisStyle} tickLine={false} axisLine={{ stroke: gridStyle }} tickFormatter={formatTimelineTick} />
                     <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
+                    <Tooltip labelFormatter={formatTooltipLabel} contentStyle={{ backgroundColor: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} iconType="line" />
                     <Line type="monotone" dataKey="successCount" name={t('common.success')} stroke={primaryFill} strokeWidth={1.5} dot={false} />
                     <Line type="monotone" dataKey="failureCount" name={t('common.failures')} stroke="var(--destructive)" strokeWidth={1.5} dot={false} />

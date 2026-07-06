@@ -253,6 +253,7 @@
   "analytics": {
     "title": "分析",
     "description": "请求量、延迟、令牌用量与失败情况。",
+    "rangeToday": "今天",
     "range24h": "24 小时",
     "range7d": "7 天",
     "range30d": "30 天",
@@ -276,6 +277,7 @@
     "savingsHintExact": "在过去 {range}，你实际节省了 ${actual}。这是相同的 token 在按模型计费的付费 API 上的花费。所显示的数字就是你真实的 30 天总额。",
     "requestsHintPinned": "其中有 {pinned} 个请求按名称固定了特定模型。{honored} 个由所固定的模型处理；{failed} 个回退到了其他模型。其余为自动路由。",
     "requestsHintAuto": "此期间的所有请求均为自动路由；没有客户端按名称固定特定模型。",
+    "rangeLabelToday": "今天",
     "rangeLabel24h": "24 小时",
     "rangeLabel7d": "7 天",
     "rangeLabel30d": "30 天",
