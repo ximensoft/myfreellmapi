@@ -50,6 +50,20 @@ describe('Responses → chat translation (#96)', () => {
     expect(msgs[0]).toEqual({ role: 'tool', tool_call_id: 'call_1', content: 'sunny' });
   });
 
+  it('skips reasoning items (Codex multi-turn history replay, #96)', () => {
+    const msgs = toChatMessages({
+      input: [
+        { type: 'message', role: 'user', content: 'hi' },
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'thinking…' }], content: null, encrypted_content: 'abc' },
+        { type: 'message', role: 'assistant', content: 'hello' },
+      ],
+    } as any);
+    expect(msgs).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ]);
+  });
+
   it('converts flat Responses tools to nested chat tools', () => {
     const tools = toChatTools([
       { type: 'function', name: 'f', description: 'd', parameters: { type: 'object' }, strict: true },

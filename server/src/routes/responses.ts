@@ -1,4 +1,7 @@
 import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -32,6 +35,68 @@ import {
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
 import { logForwardingError } from '../lib/error-logger.js';
 import { inferQuotaPoolKey, type QuotaObservationContext } from '../services/provider-quota.js';
+
+// ── Validation-failure logger ───────────────────────────────────────────
+// When /v1/responses rejects a request (Zod schema mismatch), append a
+// diagnostic entry to logs/responses-validation.log. The entry contains:
+//   - timestamp + request ID + Zod error details
+//   - a compact summary of every item in the input array (type + role only,
+//     NOT the full text — Codex system prompts can be 50 KB+)
+//   - the FULL content of any item whose type is not one of the three
+//     known schemas (message / function_call / function_call_output), since
+//     that's the actual culprit. Unknown items are usually small metadata
+//     objects (reasoning, etc.) so this won't bloat the log.
+//
+// Nothing is printed to the console — the user asked for file-only logging.
+
+const RESPONSES_VALIDATION_LOG_DIR = (() => {
+  const dir = process.env.FREEAPI_LOG_DIR?.trim()
+    || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../logs');
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { /* non-fatal */ }
+  return dir;
+})();
+
+const RESPONSES_VALIDATION_LOG_PATH = path.join(RESPONSES_VALIDATION_LOG_DIR, 'responses-validation.log');
+
+const KNOWN_ITEM_TYPES = new Set(['message', 'function_call', 'function_call_output']);
+
+function logResponsesValidationFailure(requestGroupId: string, detail: string, body: any): void {
+  try {
+    const input = body?.input;
+    const itemSummaries: any[] = [];
+    const unknownItems: any[] = [];
+
+    if (Array.isArray(input)) {
+      for (let i = 0; i < input.length; i++) {
+        const item = input[i];
+        const type = typeof item === 'object' && item ? item.type : undefined;
+        const role = typeof item === 'object' && item ? item.role : undefined;
+        itemSummaries.push({ index: i, type: type ?? null, role: role ?? null });
+        if (type && !KNOWN_ITEM_TYPES.has(type)) {
+          // This is the likely culprit — log its full content.
+          unknownItems.push({ index: i, type, item });
+        }
+      }
+    }
+
+    const entry = {
+      timestamp: new Date().toISOString(),
+      requestGroupId,
+      zodErrors: detail,
+      inputType: typeof input === 'string' ? 'string' : Array.isArray(input) ? 'array' : typeof input,
+      itemCount: Array.isArray(input) ? input.length : null,
+      itemSummaries,
+      unknownItems,
+      // Also log top-level keys present in the request (excluding input) so
+      // we can spot unsupported fields that might interact with validation.
+      topLevelKeys: body && typeof body === 'object' ? Object.keys(body).filter(k => k !== 'input') : [],
+    };
+
+    fs.appendFileSync(RESPONSES_VALIDATION_LOG_PATH, JSON.stringify(entry) + '\n', { encoding: 'utf8' });
+  } catch {
+    // Swallow — logging is best-effort.
+  }
+}
 
 export const responsesRouter = Router();
 
@@ -88,9 +153,18 @@ const functionCallOutputItemSchema = z.object({
   output: z.union([z.string(), z.array(contentPartSchema), z.record(z.string(), z.unknown())]),
 });
 
+// Reasoning items (Codex/o1-style chain-of-thought). Codex replays these in
+// the input array on multi-turn calls (store:false → client carries history).
+// Chat-completions providers have no equivalent, so we accept-and-ignore them
+// at both the schema and translation layers. (#96)
+const reasoningItemSchema = z.object({
+  type: z.literal('reasoning'),
+}).passthrough();
+
 const inputItemSchema = z.union([
   functionCallItemSchema,
   functionCallOutputItemSchema,
+  reasoningItemSchema,
   messageItemSchema,
 ]);
 
@@ -183,6 +257,11 @@ export function toChatMessages(req: ResponsesRequest): ChatMessage[] {
           ? partsToString(item.output as any)
           : JSON.stringify(item.output);
       messages.push({ role: 'tool', tool_call_id: item.call_id, content: output });
+    } else if ('type' in item && item.type === 'reasoning') {
+      // Reasoning items (chain-of-thought) have no chat-completions equivalent —
+      // skip them. They're accepted by the schema purely so Codex's history
+      // replay doesn't 400 the whole request. (#96)
+      continue;
     } else {
       // message item
       const m = item as z.infer<typeof messageItemSchema>;
@@ -298,9 +377,11 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
 
   const parsed = responsesRequestSchema.safeParse(req.body);
   if (!parsed.success) {
+    const detail = parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
+    logResponsesValidationFailure(requestGroupId, detail, req.body);
     res.status(400).json({
       error: {
-        message: `Invalid request: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+        message: `Invalid request: ${detail}`,
         type: 'invalid_request_error',
       },
     });
