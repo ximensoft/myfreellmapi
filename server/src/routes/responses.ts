@@ -34,6 +34,10 @@ import {
 } from './proxy.js';
 import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
 import { logForwardingError } from '../lib/error-logger.js';
+import { logCompact } from '../lib/compact-logger.js';
+import { decrypt } from '../lib/crypto.js';
+import { getDb } from '../db/index.js';
+import { proxyFetch } from '../lib/proxy.js';
 import { inferQuotaPoolKey, type QuotaObservationContext } from '../services/provider-quota.js';
 
 // ── Validation-failure logger ───────────────────────────────────────────
@@ -925,4 +929,150 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
   res.status(429).json({
     error: { message: exhaustedMsg, type: 'rate_limit_error' },
   });
+});
+
+// ── Compaction endpoint ────────────────────────────────────────────────────
+// Codex CLI triggers context compaction by POSTing to /responses/compact.
+// This is a unary (non-streaming) call that sends the full conversation
+// history and expects a compressed version back. We forward it directly to
+// the real OpenAI API using the "myopenai" custom provider's key + base_url.
+// The myopenai provider is a user-added custom provider that points at the
+// real OpenAI API (base_url like https://api.openai.com/v1 with a real key).
+responsesRouter.post('/responses/compact', async (req: Request, res: Response) => {
+  // 1. Authenticate with the unified API key.
+  const token = extractApiToken(req);
+  const unifiedKey = getUnifiedApiKey();
+  if (!token || !timingSafeStringEqual(token, unifiedKey)) {
+    res.status(401).json({
+      error: { message: 'Invalid API key', type: 'authentication_error' },
+    });
+    return;
+  }
+
+  // 2. Look up the "myopenai" custom provider in the database.
+  const db = getDb();
+  const keyRow = db.prepare(
+    'SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 LIMIT 1',
+  ).get('myopenai') as any;
+
+  if (!keyRow) {
+    logCompact({
+      timestamp: new Date().toISOString(),
+      requestModel: req.body?.model ?? 'unknown',
+      inputItemCount: Array.isArray(req.body?.input) ? req.body.input.length : 0,
+      requestSize: Buffer.byteLength(JSON.stringify(req.body ?? {})),
+      httpStatus: 401,
+      outputItemCount: 0,
+      responseSize: 0,
+      latencyMs: 0,
+      error: 'myopenai provider not found or disabled',
+      requestBody: JSON.stringify(req.body),
+      responseBody: '',
+    });
+    console.log(
+      `[compact] 远程压缩失败: myopenai provider 未配置或已禁用`,
+    );
+    res.status(401).json({
+      error: { message: 'Compaction provider (myopenai) not configured', type: 'configuration_error' },
+    });
+    return;
+  }
+
+  // 3. Decrypt the real API key.
+  let realApiKey: string;
+  try {
+    realApiKey = decrypt(keyRow.encrypted_key, keyRow.iv, keyRow.auth_tag);
+  } catch {
+    console.log(`[compact] 远程压缩失败: myopenai API key 解密失败`);
+    res.status(401).json({
+      error: { message: 'Failed to decrypt myopenai API key', type: 'configuration_error' },
+    });
+    return;
+  }
+
+  // 4. Build the target URL.
+  const baseUrl = keyRow.base_url?.trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    console.log(`[compact] 远程压缩失败: myopenai provider 未配置 base_url`);
+    res.status(400).json({
+      error: { message: 'myopenai provider has no base_url configured', type: 'configuration_error' },
+    });
+    return;
+  }
+  const targetUrl = `${baseUrl}/responses/compact`;
+
+  // 5. Forward the request — body is passed through unchanged.
+  const requestBody = JSON.stringify(req.body);
+  const start = Date.now();
+
+  try {
+    const upstreamRes = await proxyFetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${realApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: requestBody,
+      signal: AbortSignal.timeout(120_000),
+    }, 'myopenai');
+
+    const responseBody = await upstreamRes.text();
+    const latencyMs = Date.now() - start;
+
+    // Parse output count for logging (non-fatal if parse fails).
+    let outputItemCount = 0;
+    try {
+      const parsed = JSON.parse(responseBody);
+      if (Array.isArray(parsed.output)) outputItemCount = parsed.output.length;
+    } catch { /* non-JSON response — log as-is */ }
+
+    // 6. Log to compact.log.
+    logCompact({
+      timestamp: new Date().toISOString(),
+      requestModel: req.body?.model ?? 'unknown',
+      inputItemCount: Array.isArray(req.body?.input) ? req.body.input.length : 0,
+      requestSize: Buffer.byteLength(requestBody),
+      httpStatus: upstreamRes.status,
+      outputItemCount,
+      responseSize: Buffer.byteLength(responseBody),
+      latencyMs,
+      error: upstreamRes.ok ? undefined : `HTTP ${upstreamRes.status}`,
+      requestBody,
+      responseBody,
+    });
+
+    // 7. Console log — one concise line.
+    console.log(
+      `[compact] 远程压缩 model=${req.body?.model ?? '?'} inputItems=${Array.isArray(req.body?.input) ? req.body.input.length : 0} → ${upstreamRes.status} ${upstreamRes.statusText} outputItems=${outputItemCount} lat=${latencyMs}ms`,
+    );
+
+    // 8. Return the upstream response.
+    res.status(upstreamRes.status).set('Content-Type', 'application/json').send(responseBody);
+  } catch (err: any) {
+    const latencyMs = Date.now() - start;
+    const errorMsg = err.message ?? 'network error';
+
+    logCompact({
+      timestamp: new Date().toISOString(),
+      requestModel: req.body?.model ?? 'unknown',
+      inputItemCount: Array.isArray(req.body?.input) ? req.body.input.length : 0,
+      requestSize: Buffer.byteLength(requestBody),
+      httpStatus: 0,
+      outputItemCount: 0,
+      responseSize: 0,
+      latencyMs,
+      error: errorMsg,
+      requestBody,
+      responseBody: '',
+    });
+
+    console.log(
+      `[compact] 远程压缩失败 model=${req.body?.model ?? '?'} error=${errorMsg} lat=${latencyMs}ms`,
+    );
+
+    // Network error / timeout → return 400 to Codex.
+    res.status(400).json({
+      error: { message: `Compaction request failed: ${errorMsg}`, type: 'api_error' },
+    });
+  }
 });
