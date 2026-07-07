@@ -562,6 +562,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         httpStatus: typeof err?.status === 'number' ? err.status : 0,
         errorMessage: safeError,
         rawBody: err?.rawBody,
+        requestBody: JSON.stringify(req.body ?? {}),
         latencyMs: Date.now() - start,
         attempt,
         retryable: !(err instanceof StreamAlreadyStarted) && !(err instanceof StreamForwardStarted) && isRetryableError(err),

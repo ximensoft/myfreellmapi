@@ -907,45 +907,46 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         error: safeError,
       });
       logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError, null, pinnedModelId);
-      logForwardingError({
-        timestamp: new Date().toISOString(),
-        route: 'chat/completions',
-        platform: route.platform,
-        model: route.modelId,
-        keyId: route.keyId,
-        httpStatus: typeof err?.status === 'number' ? err.status : 0,
-        errorMessage: safeError,
-        rawBody: err?.rawBody,
-        latencyMs: latency,
-        attempt,
-        retryable: isRetryableError(err),
-        requestModel: pinnedModelId,
-      });
+logForwardingError({
+  timestamp: new Date().toISOString(),
+  route: 'chat/completions',
+  platform: route.platform,
+  model: route.modelId,
+  keyId: route.keyId,
+  httpStatus: typeof err?.status === 'number' ? err.status : 0,
+  errorMessage: safeError,
+  rawBody: err?.rawBody,
+  requestBody: JSON.stringify(req.body ?? {}),
+  latencyMs: latency,
+  attempt,
+  retryable: isRetryableError(err),
+  requestModel: pinnedModelId,
+});
 
-      if (isRetryableError(err)) {
-        if (isModelNotFoundError(err) || isModelAccessForbiddenError(err)) skipModels.add(route.modelDbId);
-        skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
-        setCooldown(
-          route.platform,
-          route.modelId,
-          route.keyId,
-          isPaymentRequiredError(err)
-            ? PAYMENT_REQUIRED_COOLDOWN_MS
-            : isModelAccessForbiddenError(err)
-            ? MODEL_FORBIDDEN_COOLDOWN_MS
-            : getCooldownDurationForLimit(route.platform, route.modelId, route.keyId, {
-                rpd: route.rpdLimit,
-                tpd: route.tpdLimit,
-              }, err.retryAfterMs),
-        );
-        recordRateLimitHit(route.modelDbId);
-        learnLimitFromError(route.modelDbId, err);
-        lastError = err;
-        continue;
-      }
+if (isRetryableError(err)) {
+  if (isModelNotFoundError(err) || isModelAccessForbiddenError(err)) skipModels.add(route.modelDbId);
+  skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
+  setCooldown(
+    route.platform,
+    route.modelId,
+    route.keyId,
+    isPaymentRequiredError(err)
+      ? PAYMENT_REQUIRED_COOLDOWN_MS
+      : isModelAccessForbiddenError(err)
+      ? MODEL_FORBIDDEN_COOLDOWN_MS
+      : getCooldownDurationForLimit(route.platform, route.modelId, route.keyId, {
+          rpd: route.rpdLimit,
+          tpd: route.tpdLimit,
+        }, err.retryAfterMs),
+  );
+  recordRateLimitHit(route.modelDbId);
+  learnLimitFromError(route.modelDbId, err);
+  lastError = err;
+  continue;
+}
 
-      // Non-retryable error: request validation errors (e.g. tool_choice without
-      // tools) are client faults → 400; everything else is a provider fault → 502.
+// Non-retryable error: request validation errors (e.g. tool_choice without
+// tools) are client faults → 400; everything else is a provider fault → 502.
       const legacyNonRetryStatus = isRequestValidationError(err) ? 400 : 502;
       const legacyNonRetryType = isRequestValidationError(err) ? 'invalid_request_error' : 'provider_error';
       res.status(legacyNonRetryStatus).json({

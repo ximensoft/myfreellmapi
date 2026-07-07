@@ -41,11 +41,23 @@ export interface ErrorLogEntry {
   httpStatus: number;
   errorMessage: string;
   rawBody?: string;
+  /** The request body sent to the upstream provider (JSON string, truncated to 10KB). */
+  requestBody?: string;
   latencyMs: number;
   attempt: number;
   retryable: boolean;
   requestModel?: string | null;
 }
+
+/** Truncate a string to maxLen characters, appending an ellipsis if cut. */
+function truncate(str: string, maxLen: number): string {
+  return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
+}
+
+/** Maximum size for the request body stored in the error log (10KB).
+ *  Large enough to capture the full messages array for most requests while
+ *  preventing a single multi-megabyte log line for pathological inputs. */
+const MAX_REQUEST_BODY_LOG_SIZE = 10_000;
 
 /**
  * Append a forwarding-API error to logs/error.log.
@@ -56,6 +68,10 @@ export interface ErrorLogEntry {
  */
 export function logForwardingError(entry: ErrorLogEntry): void {
   try {
+    // Truncate the request body to prevent multi-megabyte log lines.
+    if (entry.requestBody && entry.requestBody.length > MAX_REQUEST_BODY_LOG_SIZE) {
+      entry = { ...entry, requestBody: truncate(entry.requestBody, MAX_REQUEST_BODY_LOG_SIZE) };
+    }
     const line = JSON.stringify(entry) + '\n';
     fs.appendFileSync(ERROR_LOG_PATH, line, { encoding: 'utf8' });
   } catch {

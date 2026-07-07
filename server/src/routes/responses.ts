@@ -879,6 +879,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         httpStatus: typeof err?.status === 'number' ? err.status : 0,
         errorMessage: safeError,
         rawBody: err?.rawBody,
+        requestBody: JSON.stringify(req.body ?? {}),
         latencyMs: latency,
         attempt,
         retryable: !(stream && streamStarted) && isRetryableError(err),
