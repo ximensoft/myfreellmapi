@@ -38,16 +38,13 @@ import { inferQuotaPoolKey, type QuotaObservationContext } from '../services/pro
 
 // ── Validation-failure logger ───────────────────────────────────────────
 // When /v1/responses rejects a request (Zod schema mismatch), append a
-// diagnostic entry to logs/responses-validation.log. The entry contains:
-//   - timestamp + request ID + Zod error details
-//   - a compact summary of every item in the input array (type + role only,
-//     NOT the full text — Codex system prompts can be 50 KB+)
-//   - the FULL content of any item whose type is not one of the three
-//     known schemas (message / function_call / function_call_output), since
-//     that's the actual culprit. Unknown items are usually small metadata
-//     objects (reasoning, etc.) so this won't bloat the log.
+// diagnostic entry to logs/responses-validation.log. The entry captures
+// enough context to diagnose the failure without re-running: HTTP method,
+// path, sanitized headers, the full Zod issue tree, a compact summary of
+// every input item, and the full content of any unrecognized item type.
 //
-// Nothing is printed to the console — the user asked for file-only logging.
+// Console: a single one-line summary so the operator knows something failed
+// and can find the detail in the log file.
 
 const RESPONSES_VALIDATION_LOG_DIR = (() => {
   const dir = process.env.FREEAPI_LOG_DIR?.trim()
@@ -60,8 +57,18 @@ const RESPONSES_VALIDATION_LOG_PATH = path.join(RESPONSES_VALIDATION_LOG_DIR, 'r
 
 const KNOWN_ITEM_TYPES = new Set(['message', 'function_call', 'function_call_output']);
 
-function logResponsesValidationFailure(requestGroupId: string, detail: string, body: any): void {
+function logResponsesValidationFailure(
+  requestGroupId: string,
+  detail: string,
+  zodError: z.ZodError,
+  req: Request,
+): void {
+  // 1. Console — one line, no request body.
+  console.warn(`[responses] 400 invalid /v1/responses [${requestGroupId}]: ${detail}`);
+
+  // 2. File — full context for post-mortem debugging.
   try {
+    const body = req.body;
     const input = body?.input;
     const itemSummaries: any[] = [];
     const unknownItems: any[] = [];
@@ -79,22 +86,46 @@ function logResponsesValidationFailure(requestGroupId: string, detail: string, b
       }
     }
 
+    // Sanitize headers: keep everything except auth tokens.
+    const sanitizedHeaders: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (key === 'authorization' || key === 'x-api-key') {
+        sanitizedHeaders[key] = '(redacted)';
+      } else {
+        sanitizedHeaders[key] = Array.isArray(value) ? value.join(', ') : (value ?? '');
+      }
+    }
+
     const entry = {
       timestamp: new Date().toISOString(),
       requestGroupId,
+      http: {
+        method: req.method,
+        path: req.path,
+        url: req.originalUrl,
+      },
       zodErrors: detail,
-      inputType: typeof input === 'string' ? 'string' : Array.isArray(input) ? 'array' : typeof input,
-      itemCount: Array.isArray(input) ? input.length : null,
-      itemSummaries,
-      unknownItems,
-      // Also log top-level keys present in the request (excluding input) so
-      // we can spot unsupported fields that might interact with validation.
-      topLevelKeys: body && typeof body === 'object' ? Object.keys(body).filter(k => k !== 'input') : [],
+      // Full structured Zod issue array — not just the joined string. Each
+      // issue has path, message, code, and (for union errors) a nested
+      // `unionErrors` tree that shows exactly which branch failed and why.
+      zodIssues: zodError.issues,
+      request: {
+        model: body?.model ?? null,
+        stream: body?.stream ?? false,
+        inputType: typeof input === 'string' ? 'string' : Array.isArray(input) ? 'array' : typeof input,
+        itemCount: Array.isArray(input) ? input.length : null,
+        itemSummaries,
+        unknownItems,
+        topLevelKeys: body && typeof body === 'object' ? Object.keys(body).filter(k => k !== 'input') : [],
+      },
+      headers: sanitizedHeaders,
     };
 
     fs.appendFileSync(RESPONSES_VALIDATION_LOG_PATH, JSON.stringify(entry) + '\n', { encoding: 'utf8' });
-  } catch {
-    // Swallow — logging is best-effort.
+  } catch (logErr) {
+    // If the file logger itself fails, at least surface that on the console
+    // so the operator knows diagnostic data was lost.
+    console.error(`[responses] failed to write validation log: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
   }
 }
 
@@ -378,7 +409,7 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
   const parsed = responsesRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     const detail = parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
-    logResponsesValidationFailure(requestGroupId, detail, req.body);
+    logResponsesValidationFailure(requestGroupId, detail, parsed.error, req);
     res.status(400).json({
       error: {
         message: `Invalid request: ${detail}`,
