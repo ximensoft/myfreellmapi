@@ -542,9 +542,12 @@ keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
 
   const provider = resolveProvider(row.platform, row.base_url);
   const providerBaseUrl = provider?.getBaseUrl() ?? null;
-  const url = providerBaseUrl
+  const chatUrl = providerBaseUrl
     ? `${providerBaseUrl}/chat/completions`
     : (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/chat/completions` : '');
+  const responsesUrl = providerBaseUrl
+    ? `${providerBaseUrl}/responses`
+    : (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/responses` : '');
 
   let apiKey = '';
   try {
@@ -555,7 +558,7 @@ keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
 
   const modelRow = db.prepare('SELECT model_id FROM models WHERE platform = ? AND enabled = 1 ORDER BY id LIMIT 1').get(row.platform) as { model_id: string } | undefined;
 
-  res.json({ url, apiKey, modelId: modelRow?.model_id ?? '' });
+  res.json({ url: chatUrl, responsesUrl, apiKey, modelId: modelRow?.model_id ?? '' });
 });
 
 // Sends a minimal chat completion directly to the provider's endpoint using
@@ -568,6 +571,7 @@ const testKeySchema = z.object({
   modelId: z.string().optional(),
   apiKey: z.string().optional(),
   url: z.string().url().optional(),
+  mode: z.enum(['chat', 'responses']).default('chat'),
 });
 
 keysRouter.post('/:id/test', async (req: Request, res: Response) => {
@@ -590,14 +594,16 @@ keysRouter.post('/:id/test', async (req: Request, res: Response) => {
     return;
   }
 
-  // Resolve provider to discover the default chat endpoint URL.
+  // Resolve provider to discover the default endpoint URL.
   const provider = resolveProvider(row.platform, row.base_url);
   const providerBaseUrl = provider?.getBaseUrl() ?? null;
+  const mode = parsed.data.mode;
+  const endpointSuffix = mode === 'responses' ? '/responses' : '/chat/completions';
 
   // Determine the target URL: user override > provider base URL > custom base_url.
   const targetUrl = parsed.data.url?.trim()
-    || (providerBaseUrl ? `${providerBaseUrl}/chat/completions` : null)
-    || (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/chat/completions` : null);
+    || (providerBaseUrl ? `${providerBaseUrl}${endpointSuffix}` : null)
+    || (row.base_url ? `${row.base_url.replace(/\/+$/, '')}${endpointSuffix}` : null);
 
   if (!targetUrl) {
     res.status(400).json({ error: { message: `Cannot determine chat completion URL for platform '${row.platform}'. Please provide a URL manually.` } });
@@ -624,12 +630,18 @@ keysRouter.post('/:id/test', async (req: Request, res: Response) => {
     return;
   }
 
-  // Build a standard OpenAI-compatible request body.
-  const body = JSON.stringify({
-    model: modelId,
-    messages: [{ role: 'user', content: parsed.data.message }],
-    max_tokens: 256,
-  });
+  // Build the request body — chat/completions vs responses have different shapes.
+  const body = mode === 'responses'
+    ? JSON.stringify({
+        model: modelId,
+        input: [{ role: 'user', content: parsed.data.message }],
+        max_output_tokens: 256,
+      })
+    : JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: parsed.data.message }],
+        max_tokens: 256,
+      });
 
   // Build headers — Authorization: Bearer is the universal default.
   const headers: Record<string, string> = {

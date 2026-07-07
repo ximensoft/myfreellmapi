@@ -716,6 +716,8 @@ interface TestResult {
 
 function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void }) {
   const { t } = useI18n()
+  const queryClient = useQueryClient()
+  const [mode, setMode] = useState<'chat' | 'responses'>('chat')
   const [message, setMessage] = useState('你是哪个大模型')
   const [testUrl, setTestUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -723,22 +725,40 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   const [error, setError] = useState('')
 
   // Fetch pre-filled URL and decrypted key from the test endpoint's GET variant.
-  // We use a lightweight POST with empty body to get defaults — the backend
-  // resolves the URL and decrypts the key, then we display them as editable.
-  const { isLoading: prefetching } = useQuery<{ url: string; apiKey: string; modelId: string }>({
+  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>({
     queryKey: ['key-test-prefetch', keyId],
     queryFn: async () => {
-      const data = await apiFetch<{ url: string; apiKey: string; modelId: string }>(`/api/keys/${keyId}/test-info`)
-      setTestUrl(data.url)
+      const data = await apiFetch<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>(`/api/keys/${keyId}/test-info`)
+      setTestUrl(mode === 'responses' ? data.responsesUrl : data.url)
       setApiKey(data.apiKey)
       return data
     },
   })
 
+  // When mode toggles, swap the URL to match (unless the user has manually edited it).
+  const handleModeChange = (newMode: 'chat' | 'responses') => {
+    if (newMode === mode) return
+    setMode(newMode)
+    // Re-fetch the prefetch data to get the correct URL for the new mode.
+    // We use the queryClient cache if available.
+    // The URL will be updated in the next render via the effect below.
+  }
+
+  // Update URL when mode changes (only if prefetch data is available).
+  // We read from the query cache to avoid a refetch.
+  useEffect(() => {
+    if (prefetching) return
+    // Use queryClient to get cached data
+    const cached = queryClient.getQueryData<{ url: string; responsesUrl: string }>(['key-test-prefetch', keyId])
+    if (cached) {
+      setTestUrl(mode === 'responses' ? cached.responsesUrl : cached.url)
+    }
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const testMutation = useMutation({
     mutationFn: () => apiFetch<TestResult>(`/api/keys/${keyId}/test`, {
       method: 'POST',
-      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined }),
+      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined, mode }),
     }),
     onSuccess: (data) => { setResult(data); setError('') },
     onError: (err: Error) => { setError(err.message); setResult(null) },
@@ -769,6 +789,22 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
           <Button variant="ghost" size="xs" onClick={onClose} className="size-7 p-0">
             <X className="size-4" />
           </Button>
+        </div>
+
+        {/* Mode toggle: Chat Completions vs Responses */}
+        <div className="flex gap-1 mb-3 p-1 rounded-xl bg-muted/50 w-fit">
+          <button
+            onClick={() => handleModeChange('chat')}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${mode === 'chat' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            /chat/completions
+          </button>
+          <button
+            onClick={() => handleModeChange('responses')}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${mode === 'responses' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            /responses
+          </button>
         </div>
 
         {/* Input fields */}
