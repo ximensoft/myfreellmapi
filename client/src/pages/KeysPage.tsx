@@ -1443,7 +1443,10 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                               </div>
                               {customModels.length > 0 && (
                                 <div className="mt-3 space-y-2">
-                                  <Label className="text-xs">{t('keys.editModelNames')}</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-xs w-[180px] text-muted-foreground">{t('keys.editModelIdLabel')}</Label>
+                                    <Label className="text-xs w-[200px]">{t('keys.editModelNames')}</Label>
+                                  </div>
                                   {customModels.map(m => (
                                     <div key={m.id} className="flex items-center gap-2">
                                       <code className="text-[11px] text-muted-foreground font-mono w-[180px] truncate" title={m.modelId}>{m.modelId}</code>

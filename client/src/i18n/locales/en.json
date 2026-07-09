@@ -250,6 +250,7 @@
     "customAnthropicBaseUrlPlaceholder": "optional — for native Anthropic /v1/messages forwarding",
     "editApiKeyPlaceholder": "Leave blank to keep current key",
     "editModelNames": "Model display names",
+    "editModelIdLabel": "Model ID (read-only)",
     "editAddModels": "Add new models (separate multiple model IDs with commas or newlines)",
     "testModelHint": "model ID shown first, used in actual API calls",
     "addModel": "Add model",
