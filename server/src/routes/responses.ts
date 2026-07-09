@@ -505,6 +505,26 @@ responsesRouter.post('/responses', async (req: Request, res: Response) => {
         ? `All models rate-limited. Last error: ${sanitizeProviderErrorMessage(lastError.message)}`
         : err.message;
       const type = lastError ? 'rate_limit_error' : 'routing_error';
+      // Log the per-model diagnostics so the operator can see WHY every model
+      // was skipped (cooldown, context window, tool support, quota, etc.).
+      const diag = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+      if (diag.length > 0) {
+        console.warn(`[Responses] routing exhausted — ${diag.length} model(s) considered, all skipped:`);
+        for (const d of diag) console.warn(`  · ${d}`);
+      }
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'responses',
+        platform: '-',
+        model: '-',
+        keyId: 0,
+        httpStatus: status,
+        errorMessage: message + (diag.length > 0 ? ` | ${diag.join('; ')}` : ''),
+        requestBody: JSON.stringify(req.body ?? {}),
+        latencyMs: Date.now() - start,
+        attempt,
+        retryable: false,
+      });
       if (streamStarted) {
         sse('response.failed', { response: { id: responseId, object: 'response', status: 'failed', error: { message, type } } });
         res.end();

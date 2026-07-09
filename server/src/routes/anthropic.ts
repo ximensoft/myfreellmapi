@@ -387,6 +387,29 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
     try {
       route = routeRequest(estimatedTotal, skipKeys.size > 0 ? skipKeys : undefined, preferredModel, hasImage, wantsTools, skipModels.size > 0 ? skipModels : undefined);
     } catch (err: any) {
+      // Log the per-model diagnostics so the operator can see WHY every model
+      // was skipped (cooldown, context window, tool support, quota, etc.).
+      const diag = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+      if (diag.length > 0) {
+        console.warn(`[Anthropic] routing exhausted — ${diag.length} model(s) considered, all skipped:`);
+        for (const d of diag) console.warn(`  · ${d}`);
+      }
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'messages',
+        platform: '-',
+        model: '-',
+        keyId: 0,
+        httpStatus: lastError ? 429 : (err?.status ?? 503),
+        errorMessage: lastError
+          ? `All models rate-limited. Last error: ${sanitizeProviderErrorMessage(lastError.message)}`
+          : (err?.message ?? 'No model available'),
+        requestBody: JSON.stringify(req.body ?? {}),
+        latencyMs: Date.now() - start,
+        attempt,
+        retryable: false,
+        requestModel: pinnedModelId,
+      });
       if (lastError) {
         sendError(res, 429, 'rate_limit_error', `All models rate-limited. Last error: ${sanitizeProviderErrorMessage(lastError.message)}`);
       } else {

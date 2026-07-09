@@ -714,6 +714,27 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         groupChain ?? resolvedChain?.chain,
       );
     } catch (err: any) {
+      const rawDisposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+      if (rawDisposition.length > 0) {
+        console.warn(`[Proxy] legacy completions routing exhausted — ${rawDisposition.length} model(s) considered, all skipped:`);
+        for (const d of rawDisposition) console.warn(`  · ${d}`);
+      }
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'chat/completions',
+        platform: '-',
+        model: '-',
+        keyId: 0,
+        httpStatus: lastError ? 429 : (err?.status ?? 503),
+        errorMessage: lastError
+          ? `All models rate-limited. Last error: ${sanitizeProviderErrorMessage(lastError.message)}`
+          : (err?.message ?? 'No model available') + (rawDisposition.length > 0 ? ` | ${rawDisposition.join('; ')}` : ''),
+        requestBody: JSON.stringify(req.body ?? {}),
+        latencyMs: Date.now() - start,
+        attempt,
+        retryable: false,
+        requestModel: pinnedModelId,
+      });
       if (lastError) {
         res.status(429).json({
           error: {
@@ -722,11 +743,6 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
           },
         });
       } else {
-        const rawDisposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
-        // Only log models whose platform has at least one enabled key — models
-        // with no key configured are noise (the user knows they haven't added a
-        // key, and it swamps the useful diagnostics for models that *do* have keys
-        // but failed for other reasons like cooldowns or rate limits).
         const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
         const skipped = rawDisposition.length - disposition.length;
         const reasonTally: Record<string, number> = {};
@@ -1373,6 +1389,27 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
       route = routeRequest(routingEstimate, skipKeys.size > 0 ? skipKeys : undefined, preferredModel, hasImage, wantsTools, skipModels.size > 0 ? skipModels : undefined, groupChain ?? resolvedChain?.chain);
     } catch (err: any) {
       // No more models available
+      const rawDisposition2: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
+      if (rawDisposition2.length > 0) {
+        console.warn(`[Proxy] routing exhausted — ${rawDisposition2.length} model(s) considered, all skipped:`);
+        for (const d of rawDisposition2) console.warn(`  · ${d}`);
+      }
+      logForwardingError({
+        timestamp: new Date().toISOString(),
+        route: 'chat/completions',
+        platform: '-',
+        model: '-',
+        keyId: 0,
+        httpStatus: lastError ? 429 : (err?.status ?? 503),
+        errorMessage: lastError
+          ? `All models rate-limited. Last error: ${sanitizeProviderErrorMessage(lastError.message)}`
+          : (err?.message ?? 'No model available') + (rawDisposition2.length > 0 ? ` | ${rawDisposition2.join('; ')}` : ''),
+        requestBody: JSON.stringify(req.body ?? {}),
+        latencyMs: Date.now() - start,
+        attempt,
+        retryable: false,
+        requestModel: pinnedModelId,
+      });
       if (lastError) {
         const safeLastError = sanitizeProviderErrorMessage(lastError.message);
         res.status(429).json({
@@ -1386,13 +1423,8 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         // upstream was tried, so this is the ONLY place the per-model disposition
         // is recorded. Without it a routing_error 429 is opaque — you can't tell a
         // genuinely dry pool from cooldowns/quota/context narrowing (issue _1).
-        const rawDisposition: string[] = Array.isArray(err.diagnostics) ? err.diagnostics : [];
-        // Only log models whose platform has at least one enabled key — models
-        // with no key configured are noise (the user knows they haven't added a
-        // key, and it swamps the useful diagnostics for models that *do* have keys
-        // but failed for other reasons like cooldowns or rate limits).
-        const disposition = rawDisposition.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
-        const skipped = rawDisposition.length - disposition.length;
+        const disposition = rawDisposition2.filter(d => !d.endsWith(': no enabled+healthy key for platform'));
+        const skipped = rawDisposition2.length - disposition.length;
         const reasonTally2: Record<string, number> = {};
         for (const d of disposition) {
           const reason = d.split(': ').slice(1).join(': ') || 'unknown';
