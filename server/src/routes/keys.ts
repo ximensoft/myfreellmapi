@@ -51,6 +51,7 @@ keysRouter.get('/', (_req: Request, res: Response) => {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM api_keys ORDER BY created_at DESC').all() as any[];
 
+  // Custom models are bound to a specific key via key_id.
   const customModels = [
     ...db.prepare(`
       SELECT key_id, id, 'chat' AS kind, model_id, display_name, NULL AS family
@@ -90,6 +91,25 @@ keysRouter.get('/', (_req: Request, res: Response) => {
     });
   }
 
+  // Catalog (built-in) models are bound by platform, not by key_id.
+  // Group them by platform so built-in keys can also show/edit model display names.
+  const catalogModelsByPlatform = new Map<string, any[]>();
+  for (const row of db.prepare(`
+    SELECT platform, id, model_id, display_name
+      FROM models
+     WHERE is_custom = 0
+  `).all() as any[]) {
+    const list = catalogModelsByPlatform.get(row.platform) ?? [];
+    list.push({
+      id: row.id,
+      kind: 'chat',
+      modelId: row.model_id,
+      displayName: row.display_name,
+      family: null,
+    });
+    catalogModelsByPlatform.set(row.platform, list);
+  }
+
   // Fetch active cooldowns for all keys
   const keyIdPlatforms = rows.map(row => ({ id: row.id, platform: row.platform }));
   const cooldowns = getActiveCooldownsForKeys(keyIdPlatforms);
@@ -123,7 +143,9 @@ keysRouter.get('/', (_req: Request, res: Response) => {
       isCustom: row.is_custom === 1,
       createdAt: row.created_at,
       lastCheckedAt: row.last_checked_at,
-      models: row.is_custom === 1 ? (modelsByKeyId.get(row.id) ?? []) : undefined,
+      models: row.is_custom === 1
+        ? (modelsByKeyId.get(row.id) ?? [])
+        : (catalogModelsByPlatform.get(row.platform) ?? undefined),
       cooldowns: keyCooldowns.length > 0 ? keyCooldowns.map(c => ({
         modelId: c.modelId,
         remainingMs: c.remainingMs,

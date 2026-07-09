@@ -817,15 +817,18 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
         <div className="space-y-3">
           {availableModels.length > 0 && (
             <div className="space-y-1.5">
-              <Label className="text-xs">Model</Label>
+              <Label className="text-xs">Model <span className="text-muted-foreground">({t('keys.testModelHint')})</span></Label>
               <Select value={selectedModelId} onValueChange={setSelectedModelId}>
-                <SelectTrigger className="text-xs">
+                <SelectTrigger className="w-full text-xs">
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent>
                   {availableModels.map(m => (
                     <SelectItem key={m.id} value={m.model_id}>
-                      {m.display_name ? `${m.display_name} (${m.model_id})` : m.model_id}
+                      <span className="font-mono">{m.model_id}</span>
+                      {m.display_name && m.display_name !== m.model_id && (
+                        <span className="text-muted-foreground ml-1">— {m.display_name}</span>
+                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1438,7 +1441,7 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                                   </div>
                                 )}
                               </div>
-                              {k.isCustom && customModels.length > 0 && (
+                              {customModels.length > 0 && (
                                 <div className="mt-3 space-y-2">
                                   <Label className="text-xs">{t('keys.editModelNames')}</Label>
                                   {customModels.map(m => (

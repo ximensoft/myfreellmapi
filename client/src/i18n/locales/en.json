@@ -251,6 +251,7 @@
     "editApiKeyPlaceholder": "Leave blank to keep current key",
     "editModelNames": "Model display names",
     "editAddModels": "Add new models (separate multiple model IDs with commas or newlines)",
+    "testModelHint": "model ID shown first, used in actual API calls",
     "addModel": "Add model",
     "addModels": "Add {count} models",
     "addEmbeddingModel": "Add embedding",
