@@ -925,6 +925,7 @@ export default function KeysPage() {
   const [editApiKey, setEditApiKey] = useState('')
   const [editBaseUrl, setEditBaseUrl] = useState('')
   const [editAnthropicBaseUrl, setEditAnthropicBaseUrl] = useState('')
+  const [editModelIds, setEditModelIds] = useState<Record<number, string>>({})
   const [editModelNames, setEditModelNames] = useState<Record<number, string>>({})
   const [editNewModelId, setEditNewModelId] = useState('')
   const [editNewModelName, setEditNewModelName] = useState('')
@@ -1022,12 +1023,16 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     },
   })
 
-  const updateModelName = useMutation({
-    mutationFn: ({ modelDbId, displayName }: { modelDbId: number; displayName: string }) =>
-      apiFetch(`/api/models/${modelDbId}`, {
+  const updateModel = useMutation({
+    mutationFn: ({ modelDbId, modelId, displayName }: { modelDbId: number; modelId?: string; displayName?: string }) => {
+      const patch: Record<string, string> = {}
+      if (modelId !== undefined) patch.modelId = modelId
+      if (displayName !== undefined) patch.displayName = displayName
+      return apiFetch(`/api/models/${modelDbId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ displayName }),
-      }),
+        body: JSON.stringify(patch),
+      })
+    },
   })
 
   function startEditing(key: ApiKey) {
@@ -1036,8 +1041,13 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     setEditApiKey('')
     setEditBaseUrl(key.baseUrl ?? '')
     setEditAnthropicBaseUrl(key.anthropicBaseUrl ?? '')
+    const ids: Record<number, string> = {}
     const names: Record<number, string> = {}
-    for (const m of key.models ?? []) names[m.id] = m.displayName
+    for (const m of key.models ?? []) {
+      ids[m.id] = m.modelId
+      names[m.id] = m.displayName
+    }
+    setEditModelIds(ids)
     setEditModelNames(names)
   }
 
@@ -1047,6 +1057,7 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     setEditApiKey('')
     setEditBaseUrl('')
     setEditAnthropicBaseUrl('')
+    setEditModelIds({})
     setEditModelNames({})
     setEditNewModelId('')
     setEditNewModelName('')
@@ -1061,9 +1072,16 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
 
     const modelUpdates: Promise<unknown>[] = []
     for (const m of key.models ?? []) {
-      const newName = editModelNames[m.id] ?? ''
-      if (newName && newName !== m.displayName) {
-        modelUpdates.push(updateModelName.mutateAsync({ modelDbId: m.id, displayName: newName }))
+      const newId = (editModelIds[m.id] ?? '').trim()
+      const newName = (editModelNames[m.id] ?? '').trim()
+      const idChanged = newId && newId !== m.modelId
+      const nameChanged = newName && newName !== m.displayName
+      if (idChanged || nameChanged) {
+        modelUpdates.push(updateModel.mutateAsync({
+          modelDbId: m.id,
+          modelId: idChanged ? newId : undefined,
+          displayName: nameChanged ? newName : undefined,
+        }))
       }
     }
 
@@ -1444,12 +1462,16 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                               {customModels.length > 0 && (
                                 <div className="mt-3 space-y-2">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs w-[180px] text-muted-foreground">{t('keys.editModelIdLabel')}</Label>
+                                    <Label className="text-xs w-[200px]">{t('keys.editModelIdLabel')}</Label>
                                     <Label className="text-xs w-[200px]">{t('keys.editModelNames')}</Label>
                                   </div>
                                   {customModels.map(m => (
                                     <div key={m.id} className="flex items-center gap-2">
-                                      <code className="text-[11px] text-muted-foreground font-mono w-[180px] truncate" title={m.modelId}>{m.modelId}</code>
+                                      <Input
+                                        value={editModelIds[m.id] ?? ''}
+                                        onChange={e => setEditModelIds(prev => ({ ...prev, [m.id]: e.target.value }))}
+                                        className="h-7 w-[200px] font-mono text-xs"
+                                      />
                                       <Input
                                         value={editModelNames[m.id] ?? ''}
                                         onChange={e => setEditModelNames(prev => ({ ...prev, [m.id]: e.target.value }))}
@@ -1483,7 +1505,7 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                                 <Button
                                   size="sm"
                                   onClick={() => saveEditing(k)}
-                                  disabled={updateKey.isPending || updateModelName.isPending}
+                                  disabled={updateKey.isPending || updateModel.isPending}
                                 >
                                   {t('common.save')}
                                 </Button>

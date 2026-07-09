@@ -14,6 +14,7 @@ import {
 export const modelsRouter = Router();
 
 const modelUpdateSchema = z.object({
+  modelId: z.string().min(1).max(200).optional(),
   displayName: z.string().min(1).max(200).optional(),
   intelligenceRank: z.number().int().min(1).max(1000).optional(),
   speedRank: z.number().int().min(1).max(1000).optional(),
@@ -30,7 +31,8 @@ const modelUpdateSchema = z.object({
   fallbackEnabled: z.boolean().optional(),
 }).strict();
 
-const MODEL_FIELD_COLUMNS: Record<keyof ModelOverridePatch | 'enabled', string> = {
+const MODEL_FIELD_COLUMNS: Record<keyof ModelOverridePatch | 'enabled' | 'modelId', string> = {
+  modelId: 'model_id',
   displayName: 'display_name',
   intelligenceRank: 'intelligence_rank',
   speedRank: 'speed_rank',
