@@ -721,16 +721,18 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   const [message, setMessage] = useState('你是哪个大模型')
   const [testUrl, setTestUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [selectedModelId, setSelectedModelId] = useState('')
   const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState('')
 
   // Fetch pre-filled URL and decrypted key from the test endpoint's GET variant.
-  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>({
+  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>({
     queryKey: ['key-test-prefetch', keyId],
     queryFn: async () => {
-      const data = await apiFetch<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>(`/api/keys/${keyId}/test-info`)
+      const data = await apiFetch<{ url: string; responsesUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(`/api/keys/${keyId}/test-info`)
       setTestUrl(mode === 'responses' ? data.responsesUrl : data.url)
       setApiKey(data.apiKey)
+      setSelectedModelId(data.modelId)
       return data
     },
   })
@@ -755,10 +757,14 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Get models from cached prefetch data
+  const prefetchData = queryClient.getQueryData<{ modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(['key-test-prefetch', keyId])
+  const availableModels = prefetchData?.models ?? []
+
   const testMutation = useMutation({
     mutationFn: () => apiFetch<TestResult>(`/api/keys/${keyId}/test`, {
       method: 'POST',
-      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined, mode }),
+      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined, mode, modelId: selectedModelId || undefined }),
     }),
     onSuccess: (data) => { setResult(data); setError('') },
     onError: (err: Error) => { setError(err.message); setResult(null) },
@@ -809,6 +815,23 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
 
         {/* Input fields */}
         <div className="space-y-3">
+          {availableModels.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Model</Label>
+              <Select value={selectedModelId} onValueChange={setSelectedModelId}>
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.map(m => (
+                    <SelectItem key={m.id} value={m.model_id}>
+                      {m.display_name ? `${m.display_name} (${m.model_id})` : m.model_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs">{t('keys.testUrl')}</Label>
             <Input
@@ -900,6 +923,8 @@ export default function KeysPage() {
   const [editBaseUrl, setEditBaseUrl] = useState('')
   const [editAnthropicBaseUrl, setEditAnthropicBaseUrl] = useState('')
   const [editModelNames, setEditModelNames] = useState<Record<number, string>>({})
+  const [editNewModelId, setEditNewModelId] = useState('')
+  const [editNewModelName, setEditNewModelName] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [confirmDeleteModelKey, setConfirmDeleteModelKey] = useState<string | null>(null)
   const [expandedKeyIds, setExpandedKeyIds] = useState<Set<number>>(new Set())
@@ -1020,6 +1045,8 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     setEditBaseUrl('')
     setEditAnthropicBaseUrl('')
     setEditModelNames({})
+    setEditNewModelId('')
+    setEditNewModelName('')
   }
 
   async function saveEditing(key: ApiKey) {
@@ -1037,7 +1064,9 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
       }
     }
 
-    if (Object.keys(body).length === 0 && modelUpdates.length === 0) {
+    // Allow save when: key fields changed, model names changed, or new models to add.
+    const hasNewModels = key.isCustom && editNewModelId.trim().length > 0
+    if (Object.keys(body).length === 0 && modelUpdates.length === 0 && !hasNewModels) {
       cancelEditing()
       return
     }
@@ -1051,6 +1080,28 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
       queryClient.invalidateQueries({ queryKey: ['models'] })
       queryClient.invalidateQueries({ queryKey: ['fallback'] })
     }
+
+    // Add new models if the user entered any (custom keys only).
+    if (key.isCustom && editNewModelId.trim()) {
+      const newModels = parseModelList(editNewModelId)
+      if (newModels.length > 0) {
+        await apiFetch('/api/keys/custom', {
+          method: 'POST',
+          body: JSON.stringify({
+            providerName: key.platform,
+            baseUrl: editBaseUrl || key.baseUrl || '',
+            models: newModels,
+            displayName: editNewModelName.trim() || undefined,
+            anthropicBaseUrl: editAnthropicBaseUrl.trim() || undefined,
+          }),
+        })
+        queryClient.invalidateQueries({ queryKey: ['keys'] })
+        queryClient.invalidateQueries({ queryKey: ['health'] })
+        queryClient.invalidateQueries({ queryKey: ['fallback'] })
+        queryClient.invalidateQueries({ queryKey: ['models'] })
+      }
+    }
+
     setEditingKeyId(null)
   }
 
@@ -1400,6 +1451,26 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                                       />
                                     </div>
                                   ))}
+                                </div>
+                              )}
+                              {k.isCustom && (
+                                <div className="mt-3 space-y-2">
+                                  <Label className="text-xs">{t('keys.editAddModels')}</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Textarea
+                                      value={editNewModelId}
+                                      onChange={e => setEditNewModelId(e.target.value)}
+                                      placeholder="qwen3:4b, llama3:8b"
+                                      rows={1}
+                                      className="h-7 w-[200px] font-mono text-xs"
+                                    />
+                                    <Input
+                                      value={editNewModelName}
+                                      onChange={e => setEditNewModelName(e.target.value)}
+                                      placeholder={t('keys.customDisplayNameOptional')}
+                                      className="h-7 w-[160px] text-xs"
+                                    />
+                                  </div>
                                 </div>
                               )}
                               <div className="mt-3 flex items-center gap-2">

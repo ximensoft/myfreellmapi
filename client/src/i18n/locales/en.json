@@ -250,6 +250,7 @@
     "customAnthropicBaseUrlPlaceholder": "optional — for native Anthropic /v1/messages forwarding",
     "editApiKeyPlaceholder": "Leave blank to keep current key",
     "editModelNames": "Model display names",
+    "editAddModels": "Add new models (separate multiple model IDs with commas or newlines)",
     "addModel": "Add model",
     "addModels": "Add {count} models",
     "addEmbeddingModel": "Add embedding",

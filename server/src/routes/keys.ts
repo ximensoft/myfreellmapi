@@ -558,7 +558,14 @@ keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
 
   const modelRow = db.prepare('SELECT model_id FROM models WHERE platform = ? AND enabled = 1 ORDER BY id LIMIT 1').get(row.platform) as { model_id: string } | undefined;
 
-  res.json({ url: chatUrl, responsesUrl, apiKey, modelId: modelRow?.model_id ?? '' });
+  // Return ALL enabled models for this key (custom models are bound by key_id;
+  // catalog models are bound by platform). The test dialog uses this list to
+  // populate a model selector so the user can pick which model to test.
+  const allModels = row.is_custom === 1
+    ? db.prepare('SELECT id, model_id, display_name FROM models WHERE key_id = ? AND enabled = 1 ORDER BY id').all(id) as { id: number; model_id: string; display_name: string }[]
+    : db.prepare('SELECT id, model_id, display_name FROM models WHERE platform = ? AND enabled = 1 ORDER BY id').all(row.platform) as { id: number; model_id: string; display_name: string }[];
+
+  res.json({ url: chatUrl, responsesUrl, apiKey, modelId: modelRow?.model_id ?? '', models: allModels });
 });
 
 // Sends a minimal chat completion directly to the provider's endpoint using
