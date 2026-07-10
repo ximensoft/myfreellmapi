@@ -717,7 +717,7 @@ interface TestResult {
 function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void }) {
   const { t } = useI18n()
   const queryClient = useQueryClient()
-  const [mode, setMode] = useState<'chat' | 'responses'>('chat')
+  const [mode, setMode] = useState<'chat' | 'responses' | 'anthropic'>('chat')
   const [message, setMessage] = useState('你是哪个大模型')
   const [testUrl, setTestUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -726,11 +726,11 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   const [error, setError] = useState('')
 
   // Fetch pre-filled URL and decrypted key from the test endpoint's GET variant.
-  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>({
+  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; anthropicUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>({
     queryKey: ['key-test-prefetch', keyId],
     queryFn: async () => {
-      const data = await apiFetch<{ url: string; responsesUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(`/api/keys/${keyId}/test-info`)
-      setTestUrl(mode === 'responses' ? data.responsesUrl : data.url)
+      const data = await apiFetch<{ url: string; responsesUrl: string; anthropicUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(`/api/keys/${keyId}/test-info`)
+      setTestUrl(mode === 'responses' ? data.responsesUrl : mode === 'anthropic' ? (data.anthropicUrl || data.url) : data.url)
       setApiKey(data.apiKey)
       setSelectedModelId(data.modelId)
       return data
@@ -738,7 +738,7 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   })
 
   // When mode toggles, swap the URL to match (unless the user has manually edited it).
-  const handleModeChange = (newMode: 'chat' | 'responses') => {
+  const handleModeChange = (newMode: 'chat' | 'responses' | 'anthropic') => {
     if (newMode === mode) return
     setMode(newMode)
     // Re-fetch the prefetch data to get the correct URL for the new mode.
@@ -751,9 +751,9 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   useEffect(() => {
     if (prefetching) return
     // Use queryClient to get cached data
-    const cached = queryClient.getQueryData<{ url: string; responsesUrl: string }>(['key-test-prefetch', keyId])
+    const cached = queryClient.getQueryData<{ url: string; responsesUrl: string; anthropicUrl: string }>(['key-test-prefetch', keyId])
     if (cached) {
-      setTestUrl(mode === 'responses' ? cached.responsesUrl : cached.url)
+      setTestUrl(mode === 'responses' ? cached.responsesUrl : mode === 'anthropic' ? (cached.anthropicUrl || cached.url) : cached.url)
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -797,7 +797,7 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
           </Button>
         </div>
 
-        {/* Mode toggle: Chat Completions vs Responses */}
+        {/* Mode toggle: Chat Completions vs Responses vs Anthropic */}
         <div className="flex gap-1 mb-3 p-1 rounded-xl bg-muted/50 w-fit">
           <button
             onClick={() => handleModeChange('chat')}
@@ -810,6 +810,12 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
             className={`px-3 py-1 text-xs rounded-lg transition-colors ${mode === 'responses' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
           >
             /responses
+          </button>
+          <button
+            onClick={() => handleModeChange('anthropic')}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${mode === 'anthropic' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            /anthropic
           </button>
         </div>
 
@@ -840,7 +846,7 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
             <Input
               value={testUrl}
               onChange={e => setTestUrl(e.target.value)}
-              placeholder="https://api.example.com/v1/chat/completions"
+              placeholder={mode === 'responses' ? 'https://api.example.com/v1/responses' : mode === 'anthropic' ? 'https://api.example.com/v1/messages' : 'https://api.example.com/v1/chat/completions'}
               className="font-mono text-xs"
               disabled={prefetching}
             />

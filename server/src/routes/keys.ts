@@ -9,6 +9,15 @@ import { proxyFetch, getProxyUrl, isProxyEnabled, getProxyBypassPlatforms } from
 
 export const keysRouter = Router();
 
+// Build the full Anthropic /v1/messages endpoint URL from a base URL.
+// Mirrors the logic in lib/anthropic-forward.ts:messagesEndpoint().
+function buildMessagesEndpoint(anthropicBaseUrl: string): string {
+  const base = anthropicBaseUrl.replace(/\/+$/, '');
+  if (base.endsWith('/messages')) return base;
+  if (base.endsWith('/v1')) return `${base}/messages`;
+  return `${base}/v1/messages`;
+}
+
 // Active providers — must match providers/index.ts registrations + shared/types.ts Platform.
 // Moonshot and MiniMax direct integrations were dropped in V4. HuggingFace
 // was dropped in V4 and re-added in V13 via the router.huggingface.co route.
@@ -571,6 +580,14 @@ keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
     ? `${providerBaseUrl}/responses`
     : (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/responses` : '');
 
+  // Anthropic /v1/messages endpoint: prefer a custom anthropic_base_url,
+  // otherwise fall back to the provider or custom base_url + /messages.
+  const anthropicUrl = row.anthropic_base_url
+    ? buildMessagesEndpoint(row.anthropic_base_url)
+    : (providerBaseUrl
+        ? `${providerBaseUrl}/messages`
+        : (row.base_url ? `${row.base_url.replace(/\/+$/, '')}/messages` : ''));
+
   let apiKey = '';
   try {
     apiKey = decrypt(row.encrypted_key, row.iv, row.auth_tag);
@@ -587,7 +604,7 @@ keysRouter.get('/:id/test-info', (req: Request, res: Response) => {
     ? db.prepare('SELECT id, model_id, display_name FROM models WHERE key_id = ? AND enabled = 1 ORDER BY id').all(id) as { id: number; model_id: string; display_name: string }[]
     : db.prepare('SELECT id, model_id, display_name FROM models WHERE platform = ? AND enabled = 1 ORDER BY id').all(row.platform) as { id: number; model_id: string; display_name: string }[];
 
-  res.json({ url: chatUrl, responsesUrl, apiKey, modelId: modelRow?.model_id ?? '', models: allModels });
+  res.json({ url: chatUrl, responsesUrl, anthropicUrl, apiKey, modelId: modelRow?.model_id ?? '', models: allModels });
 });
 
 // Sends a minimal chat completion directly to the provider's endpoint using
@@ -600,7 +617,7 @@ const testKeySchema = z.object({
   modelId: z.string().optional(),
   apiKey: z.string().optional(),
   url: z.string().url().optional(),
-  mode: z.enum(['chat', 'responses']).default('chat'),
+  mode: z.enum(['chat', 'responses', 'anthropic']).default('chat'),
 });
 
 keysRouter.post('/:id/test', async (req: Request, res: Response) => {
@@ -627,10 +644,15 @@ keysRouter.post('/:id/test', async (req: Request, res: Response) => {
   const provider = resolveProvider(row.platform, row.base_url);
   const providerBaseUrl = provider?.getBaseUrl() ?? null;
   const mode = parsed.data.mode;
-  const endpointSuffix = mode === 'responses' ? '/responses' : '/chat/completions';
+  const endpointSuffix = mode === 'responses'
+    ? '/responses'
+    : (mode === 'anthropic' ? '/messages' : '/chat/completions');
 
   // Determine the target URL: user override > provider base URL > custom base_url.
+  // For Anthropic mode, prefer anthropic_base_url when available.
+  const anthropicBaseUrl = row.anthropic_base_url ?? null;
   const targetUrl = parsed.data.url?.trim()
+    || (mode === 'anthropic' && anthropicBaseUrl ? buildMessagesEndpoint(anthropicBaseUrl) : null)
     || (providerBaseUrl ? `${providerBaseUrl}${endpointSuffix}` : null)
     || (row.base_url ? `${row.base_url.replace(/\/+$/, '')}${endpointSuffix}` : null);
 
@@ -659,24 +681,40 @@ keysRouter.post('/:id/test', async (req: Request, res: Response) => {
     return;
   }
 
-  // Build the request body — chat/completions vs responses have different shapes.
+  // Build the request body — each mode has its own wire format.
+  // Anthropic Messages API: { model, max_tokens, messages: [{role, content}] }
+  // with x-api-key + anthropic-version headers (see anthropic-forward.ts).
   const body = mode === 'responses'
     ? JSON.stringify({
         model: modelId,
         input: [{ role: 'user', content: parsed.data.message }],
         max_output_tokens: 256,
       })
-    : JSON.stringify({
-        model: modelId,
-        messages: [{ role: 'user', content: parsed.data.message }],
-        max_tokens: 256,
-      });
+    : mode === 'anthropic'
+      ? JSON.stringify({
+          model: modelId,
+          max_tokens: 256,
+          messages: [{ role: 'user', content: parsed.data.message }],
+        })
+      : JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: parsed.data.message }],
+          max_tokens: 256,
+        });
 
-  // Build headers — Authorization: Bearer is the universal default.
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  };
+  // Build headers. Anthropic uses x-api-key + anthropic-version; we also
+  // send Authorization: Bearer for compatibility with proxy/gateway setups.
+  const headers: Record<string, string> = mode === 'anthropic'
+    ? {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      }
+    : {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      };
 
   // Build the curl command for display.
   const curlHeaderFlags = Object.entries(headers)
