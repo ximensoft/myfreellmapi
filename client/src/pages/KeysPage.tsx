@@ -717,26 +717,28 @@ interface TestResult {
 function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void }) {
   const { t } = useI18n()
   const queryClient = useQueryClient()
-  const [mode, setMode] = useState<'chat' | 'responses'>('chat')
+  const [mode, setMode] = useState<'chat' | 'responses' | 'anthropic'>('chat')
   const [message, setMessage] = useState('你是哪个大模型')
   const [testUrl, setTestUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [selectedModelId, setSelectedModelId] = useState('')
   const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState('')
 
   // Fetch pre-filled URL and decrypted key from the test endpoint's GET variant.
-  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>({
+  const { isLoading: prefetching } = useQuery<{ url: string; responsesUrl: string; anthropicUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>({
     queryKey: ['key-test-prefetch', keyId],
     queryFn: async () => {
-      const data = await apiFetch<{ url: string; responsesUrl: string; apiKey: string; modelId: string }>(`/api/keys/${keyId}/test-info`)
-      setTestUrl(mode === 'responses' ? data.responsesUrl : data.url)
+      const data = await apiFetch<{ url: string; responsesUrl: string; anthropicUrl: string; apiKey: string; modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(`/api/keys/${keyId}/test-info`)
+      setTestUrl(mode === 'responses' ? data.responsesUrl : mode === 'anthropic' ? (data.anthropicUrl || data.url) : data.url)
       setApiKey(data.apiKey)
+      setSelectedModelId(data.modelId)
       return data
     },
   })
 
   // When mode toggles, swap the URL to match (unless the user has manually edited it).
-  const handleModeChange = (newMode: 'chat' | 'responses') => {
+  const handleModeChange = (newMode: 'chat' | 'responses' | 'anthropic') => {
     if (newMode === mode) return
     setMode(newMode)
     // Re-fetch the prefetch data to get the correct URL for the new mode.
@@ -749,16 +751,20 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
   useEffect(() => {
     if (prefetching) return
     // Use queryClient to get cached data
-    const cached = queryClient.getQueryData<{ url: string; responsesUrl: string }>(['key-test-prefetch', keyId])
+    const cached = queryClient.getQueryData<{ url: string; responsesUrl: string; anthropicUrl: string }>(['key-test-prefetch', keyId])
     if (cached) {
-      setTestUrl(mode === 'responses' ? cached.responsesUrl : cached.url)
+      setTestUrl(mode === 'responses' ? cached.responsesUrl : mode === 'anthropic' ? (cached.anthropicUrl || cached.url) : cached.url)
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Get models from cached prefetch data
+  const prefetchData = queryClient.getQueryData<{ modelId: string; models: { id: number; model_id: string; display_name: string }[] }>(['key-test-prefetch', keyId])
+  const availableModels = prefetchData?.models ?? []
 
   const testMutation = useMutation({
     mutationFn: () => apiFetch<TestResult>(`/api/keys/${keyId}/test`, {
       method: 'POST',
-      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined, mode }),
+      body: JSON.stringify({ message, url: testUrl || undefined, apiKey: apiKey || undefined, mode, modelId: selectedModelId || undefined }),
     }),
     onSuccess: (data) => { setResult(data); setError('') },
     onError: (err: Error) => { setError(err.message); setResult(null) },
@@ -791,7 +797,7 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
           </Button>
         </div>
 
-        {/* Mode toggle: Chat Completions vs Responses */}
+        {/* Mode toggle: Chat Completions vs Responses vs Anthropic */}
         <div className="flex gap-1 mb-3 p-1 rounded-xl bg-muted/50 w-fit">
           <button
             onClick={() => handleModeChange('chat')}
@@ -805,16 +811,42 @@ function KeyTestDialog({ keyId, onClose }: { keyId: number; onClose: () => void 
           >
             /responses
           </button>
+          <button
+            onClick={() => handleModeChange('anthropic')}
+            className={`px-3 py-1 text-xs rounded-lg transition-colors ${mode === 'anthropic' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            /anthropic
+          </button>
         </div>
 
         {/* Input fields */}
         <div className="space-y-3">
+          {availableModels.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Model <span className="text-muted-foreground">({t('keys.testModelHint')})</span></Label>
+              <Select value={selectedModelId} onValueChange={setSelectedModelId}>
+                <SelectTrigger className="w-full text-xs">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.map(m => (
+                    <SelectItem key={m.id} value={m.model_id}>
+                      <span className="font-mono">{m.model_id}</span>
+                      {m.display_name && m.display_name !== m.model_id && (
+                        <span className="text-muted-foreground ml-1">— {m.display_name}</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs">{t('keys.testUrl')}</Label>
             <Input
               value={testUrl}
               onChange={e => setTestUrl(e.target.value)}
-              placeholder="https://api.example.com/v1/chat/completions"
+              placeholder={mode === 'responses' ? 'https://api.example.com/v1/responses' : mode === 'anthropic' ? 'https://api.example.com/v1/messages' : 'https://api.example.com/v1/chat/completions'}
               className="font-mono text-xs"
               disabled={prefetching}
             />
@@ -899,7 +931,10 @@ export default function KeysPage() {
   const [editApiKey, setEditApiKey] = useState('')
   const [editBaseUrl, setEditBaseUrl] = useState('')
   const [editAnthropicBaseUrl, setEditAnthropicBaseUrl] = useState('')
+  const [editModelIds, setEditModelIds] = useState<Record<number, string>>({})
   const [editModelNames, setEditModelNames] = useState<Record<number, string>>({})
+  const [editNewModelId, setEditNewModelId] = useState('')
+  const [editNewModelName, setEditNewModelName] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [confirmDeleteModelKey, setConfirmDeleteModelKey] = useState<string | null>(null)
   const [expandedKeyIds, setExpandedKeyIds] = useState<Set<number>>(new Set())
@@ -994,12 +1029,16 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     },
   })
 
-  const updateModelName = useMutation({
-    mutationFn: ({ modelDbId, displayName }: { modelDbId: number; displayName: string }) =>
-      apiFetch(`/api/models/${modelDbId}`, {
+  const updateModel = useMutation({
+    mutationFn: ({ modelDbId, modelId, displayName }: { modelDbId: number; modelId?: string; displayName?: string }) => {
+      const patch: Record<string, string> = {}
+      if (modelId !== undefined) patch.modelId = modelId
+      if (displayName !== undefined) patch.displayName = displayName
+      return apiFetch(`/api/models/${modelDbId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ displayName }),
-      }),
+        body: JSON.stringify(patch),
+      })
+    },
   })
 
   function startEditing(key: ApiKey) {
@@ -1008,8 +1047,13 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     setEditApiKey('')
     setEditBaseUrl(key.baseUrl ?? '')
     setEditAnthropicBaseUrl(key.anthropicBaseUrl ?? '')
+    const ids: Record<number, string> = {}
     const names: Record<number, string> = {}
-    for (const m of key.models ?? []) names[m.id] = m.displayName
+    for (const m of key.models ?? []) {
+      ids[m.id] = m.modelId
+      names[m.id] = m.displayName
+    }
+    setEditModelIds(ids)
     setEditModelNames(names)
   }
 
@@ -1019,7 +1063,10 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
     setEditApiKey('')
     setEditBaseUrl('')
     setEditAnthropicBaseUrl('')
+    setEditModelIds({})
     setEditModelNames({})
+    setEditNewModelId('')
+    setEditNewModelName('')
   }
 
   async function saveEditing(key: ApiKey) {
@@ -1031,13 +1078,22 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
 
     const modelUpdates: Promise<unknown>[] = []
     for (const m of key.models ?? []) {
-      const newName = editModelNames[m.id] ?? ''
-      if (newName && newName !== m.displayName) {
-        modelUpdates.push(updateModelName.mutateAsync({ modelDbId: m.id, displayName: newName }))
+      const newId = (editModelIds[m.id] ?? '').trim()
+      const newName = (editModelNames[m.id] ?? '').trim()
+      const idChanged = newId && newId !== m.modelId
+      const nameChanged = newName && newName !== m.displayName
+      if (idChanged || nameChanged) {
+        modelUpdates.push(updateModel.mutateAsync({
+          modelDbId: m.id,
+          modelId: idChanged ? newId : undefined,
+          displayName: nameChanged ? newName : undefined,
+        }))
       }
     }
 
-    if (Object.keys(body).length === 0 && modelUpdates.length === 0) {
+    // Allow save when: key fields changed, model names changed, or new models to add.
+    const hasNewModels = key.isCustom && editNewModelId.trim().length > 0
+    if (Object.keys(body).length === 0 && modelUpdates.length === 0 && !hasNewModels) {
       cancelEditing()
       return
     }
@@ -1051,6 +1107,28 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
       queryClient.invalidateQueries({ queryKey: ['models'] })
       queryClient.invalidateQueries({ queryKey: ['fallback'] })
     }
+
+    // Add new models if the user entered any (custom keys only).
+    if (key.isCustom && editNewModelId.trim()) {
+      const newModels = parseModelList(editNewModelId)
+      if (newModels.length > 0) {
+        await apiFetch('/api/keys/custom', {
+          method: 'POST',
+          body: JSON.stringify({
+            providerName: key.platform,
+            baseUrl: editBaseUrl || key.baseUrl || '',
+            models: newModels,
+            displayName: editNewModelName.trim() || undefined,
+            anthropicBaseUrl: editAnthropicBaseUrl.trim() || undefined,
+          }),
+        })
+        queryClient.invalidateQueries({ queryKey: ['keys'] })
+        queryClient.invalidateQueries({ queryKey: ['health'] })
+        queryClient.invalidateQueries({ queryKey: ['fallback'] })
+        queryClient.invalidateQueries({ queryKey: ['models'] })
+      }
+    }
+
     setEditingKeyId(null)
   }
 
@@ -1387,12 +1465,19 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                                   </div>
                                 )}
                               </div>
-                              {k.isCustom && customModels.length > 0 && (
+                              {customModels.length > 0 && (
                                 <div className="mt-3 space-y-2">
-                                  <Label className="text-xs">{t('keys.editModelNames')}</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-xs w-[200px]">{t('keys.editModelIdLabel')}</Label>
+                                    <Label className="text-xs w-[200px]">{t('keys.editModelNames')}</Label>
+                                  </div>
                                   {customModels.map(m => (
                                     <div key={m.id} className="flex items-center gap-2">
-                                      <code className="text-[11px] text-muted-foreground font-mono w-[180px] truncate" title={m.modelId}>{m.modelId}</code>
+                                      <Input
+                                        value={editModelIds[m.id] ?? ''}
+                                        onChange={e => setEditModelIds(prev => ({ ...prev, [m.id]: e.target.value }))}
+                                        className="h-7 w-[200px] font-mono text-xs"
+                                      />
                                       <Input
                                         value={editModelNames[m.id] ?? ''}
                                         onChange={e => setEditModelNames(prev => ({ ...prev, [m.id]: e.target.value }))}
@@ -1402,11 +1487,31 @@ const [testingKeyId, setTestingKeyId] = useState<number | null>(null)
                                   ))}
                                 </div>
                               )}
+                              {k.isCustom && (
+                                <div className="mt-3 space-y-2">
+                                  <Label className="text-xs">{t('keys.editAddModels')}</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Textarea
+                                      value={editNewModelId}
+                                      onChange={e => setEditNewModelId(e.target.value)}
+                                      placeholder="qwen3:4b, llama3:8b"
+                                      rows={1}
+                                      className="h-7 w-[200px] font-mono text-xs"
+                                    />
+                                    <Input
+                                      value={editNewModelName}
+                                      onChange={e => setEditNewModelName(e.target.value)}
+                                      placeholder={t('keys.customDisplayNameOptional')}
+                                      className="h-7 w-[160px] text-xs"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                               <div className="mt-3 flex items-center gap-2">
                                 <Button
                                   size="sm"
                                   onClick={() => saveEditing(k)}
-                                  disabled={updateKey.isPending || updateModelName.isPending}
+                                  disabled={updateKey.isPending || updateModel.isPending}
                                 >
                                   {t('common.save')}
                                 </Button>
