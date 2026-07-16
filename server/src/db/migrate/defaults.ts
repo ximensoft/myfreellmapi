@@ -5,6 +5,7 @@ import * as catalogModelState from '../migrations/20260627_000002_catalog_model_
 import * as syncCustomModelsToProfiles from '../migrations/20260628_000001_sync_custom_models_to_profiles.js';
 import * as customProviderName from '../migrations/20260628_000002_custom_provider_name.js';
 import * as anthropicBaseUrl from '../migrations/20260703_000001_anthropic_base_url.js';
+import * as requestHistoryFields from '../migrations/20260715_235513_request_history_fields.js';
 
 export interface MigrationModule {
   up(db: Database.Database): void;
@@ -22,6 +23,7 @@ export const CATALOG_MODEL_STATE_FILENAME = '20260627_000002_catalog_model_state
 export const SYNC_CUSTOM_MODELS_TO_PROFILES_FILENAME = '20260628_000001_sync_custom_models_to_profiles.ts';
 export const CUSTOM_PROVIDER_NAME_FILENAME = '20260628_000002_custom_provider_name.ts';
 export const ANTHROPIC_BASE_URL_FILENAME = '20260703_000001_anthropic_base_url.ts';
+export const REQUEST_HISTORY_FIELDS_FILENAME = '20260715_235513_request_history_fields.ts';
 
 export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: LEGACY_BASELINE_FILENAME, module: legacyBaseline },
@@ -30,4 +32,5 @@ export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: SYNC_CUSTOM_MODELS_TO_PROFILES_FILENAME, module: syncCustomModelsToProfiles },
   { filename: CUSTOM_PROVIDER_NAME_FILENAME, module: customProviderName },
   { filename: ANTHROPIC_BASE_URL_FILENAME, module: anthropicBaseUrl },
+  { filename: REQUEST_HISTORY_FIELDS_FILENAME, module: requestHistoryFields },
 ];

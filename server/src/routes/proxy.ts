@@ -780,6 +780,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
         let headerSent = false;
         let ttfbMs: number | null = null;
         let sawText = false;
+        let streamResponseText = ''; // accumulated text for history capture
         const buffered: unknown[] = [];
 
         const flushHeaders = () => {
@@ -808,6 +809,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
             const text = streamChunkText(chunk);
             if (text.length > 0) sawText = true;
             totalOutputTokens += Math.ceil(text.length / 4);
+            streamResponseText += text;
             const frame = legacyCompletionChunk(route, chunk, text);
             if (!headerSent && !sawText) {
               buffered.push(frame);
@@ -850,7 +852,7 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
             ttfbMs, 
             pinnedModelId,
             JSON.stringify(req.body ?? {}),
-            null, // Cannot capture full streaming response
+            JSON.stringify({ text: streamResponseText, finish_reason: 'stop', usage: { prompt_tokens: estimatedInputTokens, completion_tokens: totalOutputTokens } }),
             route.platform
           );
           //console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
@@ -1514,6 +1516,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         //  - a stream that ends with neither content nor calls is an empty
         //    completion and fails over like the non-stream path.
         let totalOutputTokens = 0;
+        let streamResponseText = ''; // accumulated text for history capture
         let headerSent = false;
         let ttfbMs: number | null = null;
 
@@ -1623,6 +1626,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             }
 
             totalOutputTokens += Math.ceil(text.length / 4);
+            streamResponseText += text;
 
             if (mode === 'passthrough') {
               writeChunk({ ...anyChunk, choices: [{ ...choice, delta: { ...choice.delta, tool_calls: undefined }, finish_reason: null }] });
@@ -1719,7 +1723,8 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             inputTokens: estimatedInputTokens + injectedHandoffTokens,
             outputTokens: totalOutputTokens,
           });
-          logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens + injectedHandoffTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId);
+          const streamResponseSummary = { id: lastMeta.id ?? `chatcmpl-${Date.now()}`, object: 'chat.completion', model: route.modelId, choices: [{ index: 0, message: { role: 'assistant', content: streamResponseText || undefined, ...(completedCalls.length > 0 ? { tool_calls: completedCalls } : {}) }, finish_reason: finish }], usage: { prompt_tokens: estimatedInputTokens + injectedHandoffTokens, completion_tokens: totalOutputTokens, total_tokens: estimatedInputTokens + injectedHandoffTokens + totalOutputTokens } };
+          logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens + injectedHandoffTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId, JSON.stringify(req.body ?? {}), JSON.stringify(streamResponseSummary), route.platform);
           //console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {

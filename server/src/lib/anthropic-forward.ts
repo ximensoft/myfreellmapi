@@ -136,12 +136,13 @@ export async function streamAnthropicForward(
   route: RouteResult,
   requestBody: Record<string, unknown>,
   ctx: StreamForwardCtx,
-): Promise<{ inputTokens: number; outputTokens: number }> {
+): Promise<{ inputTokens: number; outputTokens: number; responseBody: string | null }> {
   const url = messagesEndpoint(route.anthropicBaseUrl!);
   const body = { ...requestBody, model: route.modelId, stream: true };
 
   let messageStarted = false;
   let outputChars = 0;
+  let responseText = ''; // accumulated text for history capture
   let inputTokens = ctx.estimatedInputTokens;
   let outputTokens = 0;
 
@@ -234,6 +235,7 @@ export async function streamAnthropicForward(
           // Track output size for fallback token estimation.
           if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
             outputChars += parsed.delta.text.length;
+            responseText += parsed.delta.text;
           }
 
           ensureHeaders();
@@ -251,7 +253,18 @@ export async function streamAnthropicForward(
       outputTokens = Math.ceil(outputChars / 4);
     }
 
-    return { inputTokens, outputTokens };
+    // Build a summary of the streamed response for history capture.
+    const streamSummary = {
+      type: 'message' as const,
+      role: 'assistant' as const,
+      model: ctx.requestedModel,
+      content: responseText ? [{ type: 'text', text: responseText }] : [],
+      stop_reason: null as string | null,
+      stop_sequence: null,
+      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+    };
+
+    return { inputTokens, outputTokens, responseBody: JSON.stringify(streamSummary) };
   } catch (err: any) {
     if (err instanceof StreamForwardStarted) throw err;
 

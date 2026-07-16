@@ -436,14 +436,14 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       // (e.g. "System message must be at the beginning").
       if (route.anthropicBaseUrl) {
         if (stream) {
-          const { inputTokens: fwdIn, outputTokens: fwdOut } = await streamAnthropicForward(res, route, body, {
+          const { inputTokens: fwdIn, outputTokens: fwdOut, responseBody: fwdRespBody } = await streamAnthropicForward(res, route, body, {
             start, attempt, requestedModel, estimatedInputTokens, pinnedModelId,
           });
           recordRequest(route.platform, route.modelId, route.keyId);
           recordTokens(route.platform, route.modelId, route.keyId, fwdIn + fwdOut);
           recordSuccess(route.modelDbId);
           if (!resolved.pinned) setStickyModel(messages, route.modelDbId, sessionId);
-          logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId, JSON.stringify(body ?? {}), null, route.platform);
+          logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId, JSON.stringify(body ?? {}), fwdRespBody, route.platform);
           traceRouteEvent('Anthropic', {
             event: 'ok', requestId: `anthropic-${attempt}`, attempt,
             platform: route.platform, model: route.modelId,
@@ -675,6 +675,7 @@ async function streamCompletion(
   let textBlockIndex = -1;
   let nextIndex = 0;
   let outputChars = 0;
+  let responseText = ''; // accumulated text for history capture
   let upstreamFinish: string | null = null;
   const toolAcc = new Map<number, { id?: string; name: string; args: string }>();
 
@@ -710,7 +711,7 @@ async function streamCompletion(
         if (!messageStarted) throw new Error(`in-band provider error from ${route.displayName}: ${msg}`);
         writeSse(res, 'error', { type: 'error', error: { type: 'api_error', message: `Provider error (${route.displayName}): ${sanitizeProviderErrorMessage(String(msg))}` } });
         res.end();
-        logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
+        logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, null, ctx.pinnedModelId, ctx.requestBody, responseText ? JSON.stringify({ type: 'message', role: 'assistant', model: ctx.requestedModel, content: [{ type: 'text', text: responseText }], stop_reason: null, usage: { input_tokens: ctx.estimatedInputTokens, output_tokens: Math.ceil(outputChars / 4) } }) : null, route.platform);
         throw new StreamAlreadyStarted();
       }
 
@@ -738,6 +739,7 @@ async function streamCompletion(
       }
       writeSse(res, 'content_block_delta', { type: 'content_block_delta', index: textBlockIndex, delta: { type: 'text_delta', text } });
       outputChars += text.length;
+      responseText += text;
     }
 
     // Assemble buffered tool calls: synthesize missing ids, repair args against
@@ -780,7 +782,20 @@ async function streamCompletion(
     recordTokens(route.platform, route.modelId, route.keyId, ctx.estimatedInputTokens + outputTokens);
     recordSuccess(route.modelDbId);
     if (!ctx.pinned) setStickyModel(messages, route.modelDbId, ctx.sessionId);
-    logRequest(route.platform, route.modelId, route.keyId, 'success', ctx.estimatedInputTokens, outputTokens, Date.now() - ctx.start, null, null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
+    // Build a summary of the streamed response for history capture.
+    const streamResponseSummary = {
+      type: 'message' as const,
+      role: 'assistant' as const,
+      model: ctx.requestedModel,
+      content: [
+        ...(responseText ? [{ type: 'text', text: responseText }] : []),
+        ...completedCalls.map(c => ({ type: 'tool_use' as const, id: c.id, name: c.name, input: (() => { try { return JSON.parse(c.arguments); } catch { return {}; } })() })),
+      ],
+      stop_reason: stopReason,
+      stop_sequence: null,
+      usage: { input_tokens: ctx.estimatedInputTokens, output_tokens: outputTokens },
+    };
+    logRequest(route.platform, route.modelId, route.keyId, 'success', ctx.estimatedInputTokens, outputTokens, Date.now() - ctx.start, null, null, ctx.pinnedModelId, ctx.requestBody, JSON.stringify(streamResponseSummary), route.platform);
     traceRouteEvent('Anthropic', {
       event: 'ok',
       requestId: `anthropic-${ctx.attempt}`,
@@ -799,7 +814,7 @@ async function streamCompletion(
       // honestly instead of leaving Claude Code hanging, and stop the retry loop.
       writeSse(res, 'error', { type: 'error', error: { type: 'api_error', message: `Provider error (${route.displayName}): stream interrupted` } });
       try { res.end(); } catch { /* socket gone */ }
-      logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, sanitizeProviderErrorMessage(err.message), null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, sanitizeProviderErrorMessage(err.message), null, ctx.pinnedModelId, ctx.requestBody, responseText ? JSON.stringify({ type: 'message', role: 'assistant', model: ctx.requestedModel, content: [{ type: 'text', text: responseText }], stop_reason: null, usage: { input_tokens: ctx.estimatedInputTokens, output_tokens: Math.ceil(outputChars / 4) } }) : null, route.platform);
       traceRouteEvent('Anthropic', {
         event: 'fail',
         requestId: `anthropic-${ctx.attempt}`,
