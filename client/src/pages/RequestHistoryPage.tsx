@@ -24,7 +24,7 @@ interface RequestHistoryResponse {
 
 interface RequestHistoryStats {
   totalRequests: number
-  platformStats: { platform: string; count: number }[]
+  providerStats: { provider: string; count: number }[]
   statusStats: { status: string; count: number }[]
   recentActivity: {
     last24Hours: number
@@ -84,7 +84,7 @@ function RequestDetailsModal({ request, onClose }: { request: RequestLog; onClos
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <span className="font-medium">{t('requestHistory.platform')}:</span> {request.platform}
+              <span className="font-medium">{t('requestHistory.provider')}:</span> {request.platform}
             </div>
             <div>
               <span className="font-medium">{t('requestHistory.provider')}:</span> {request.provider}
@@ -168,7 +168,7 @@ export default function RequestHistoryPage() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [limit] = useState(50)
-  const [platform, setPlatform] = useState<string>('')
+  const [provider, setProvider] = useState<string>('')
   const [model, setModel] = useState('')
   const [status, setStatus] = useState<string>('')
   const [search, setSearch] = useState('')
@@ -176,13 +176,13 @@ export default function RequestHistoryPage() {
   
   // Fetch request history
   const { data, isLoading, error } = useQuery({
-    queryKey: ['requestHistory', page, limit, platform, model, status, search],
+    queryKey: ['requestHistory', page, limit, provider, model, status, search],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: limit.toString(),
       })
-      if (platform && platform !== 'all') params.append('platform', platform)
+      if (provider && provider !== 'all') params.append('provider', provider)
       if (model) params.append('model', model)
       if (status && status !== 'all') params.append('status', status)
       if (search) params.append('search', search)
@@ -209,7 +209,7 @@ export default function RequestHistoryPage() {
     },
   })
   
-  const platformOptions = stats?.platformStats.map(p => p.platform) || []
+  const providerOptions = stats?.providerStats.map(p => p.provider) || []
   
   const statsCards = [
     {
@@ -274,14 +274,14 @@ export default function RequestHistoryPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <label className="text-sm font-medium mb-2 block">{t('requestHistory.platform')}</label>
-              <Select value={platform} onValueChange={setPlatform}>
+              <label className="text-sm font-medium mb-2 block">{t('requestHistory.provider')}</label>
+              <Select value={provider} onValueChange={setProvider}>
                 <SelectTrigger>
-                  <SelectValue placeholder={t('requestHistory.allPlatforms')} />
+                  <SelectValue placeholder={t('requestHistory.allProviders')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t('requestHistory.allPlatforms')}</SelectItem>
-                  {platformOptions.map(p => (
+                  <SelectItem value="all">{t('requestHistory.allProviders')}</SelectItem>
+                  {providerOptions.map(p => (
                     <SelectItem key={p} value={p}>{p}</SelectItem>
                   ))}
                 </SelectContent>

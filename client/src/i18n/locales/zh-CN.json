@@ -421,6 +421,7 @@
     "filters": "筛选",
     "platform": "平台",
     "allPlatforms": "全部平台",
+    "allProviders": "全部提供商",
     "model": "模型",
     "modelPlaceholder": "模型 ID",
     "status": "状态",

@@ -26,7 +26,7 @@ function hasHistoryColumns(): boolean {
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  platform: z.string().optional(),
+  provider: z.string().optional(),
   model: z.string().optional(),
   status: z.enum(['success', 'error']).optional(),
 });
@@ -34,19 +34,21 @@ const querySchema = z.object({
 // GET /api/request-history - Get paginated request history with optional filters
 requestHistoryRouter.get('/', (req: Request, res: Response) => {
   try {
-    const { page, limit, platform, model, status } = querySchema.parse(req.query);
+    const { page, limit, provider, model, status } = querySchema.parse(req.query);
     const offset = (page - 1) * limit;
     
     const db = getDb();
     const useHistoryCols = hasHistoryColumns();
+    // Use COALESCE(provider, platform) so old records (provider is NULL) still match.
+    const providerExpr = useHistoryCols ? 'COALESCE(provider, platform)' : 'platform';
     
     // Build the WHERE clause dynamically based on filters
     const conditions: string[] = [];
     const params: any[] = [];
     
-    if (platform) {
-      conditions.push('platform = ?');
-      params.push(platform);
+    if (provider) {
+      conditions.push(`${providerExpr} = ?`);
+      params.push(provider);
     }
     
     if (model) {
@@ -79,7 +81,7 @@ requestHistoryRouter.get('/', (req: Request, res: Response) => {
     
     // Build SELECT columns — list endpoint does NOT return request_body/response_body
     // to keep the payload small. Those are fetched on demand via GET /:id.
-    const providerCol = useHistoryCols ? 'provider' : 'platform';
+    const providerCol = useHistoryCols ? 'COALESCE(provider, platform)' : 'platform';
     
     const query = `
       SELECT 
@@ -131,12 +133,57 @@ requestHistoryRouter.get('/', (req: Request, res: Response) => {
   }
 });
 
+// GET /api/request-history/stats - Get basic statistics for request history
+// IMPORTANT: This route must be defined BEFORE /:id, otherwise Express matches
+// 'stats' as an id parameter and returns 404.
+requestHistoryRouter.get('/stats', (req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const useHistoryCols = hasHistoryColumns();
+    const providerExpr = useHistoryCols ? 'COALESCE(provider, platform)' : 'platform';
+    
+    // Get counts by provider (falls back to platform for old records)
+    const providerStats = db.prepare(`
+      SELECT COALESCE(provider, platform) as provider, COUNT(*) as count
+      FROM requests 
+      GROUP BY COALESCE(provider, platform)
+      ORDER BY count DESC
+    `).all() as { provider: string; count: number }[];
+    
+    // Get counts by status
+    const statusStats = db.prepare(`
+      SELECT status, COUNT(*) as count
+      FROM requests 
+      GROUP BY status
+    `).all() as { status: string; count: number }[];
+    
+    // Get recent activity (last 24 hours)
+    const recentCount = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM requests 
+      WHERE datetime(created_at) >= datetime('now', '-24 hours')
+    `).get() as { count: number };
+    
+    res.json({
+      totalRequests: providerStats.reduce((sum, p) => sum + p.count, 0),
+      providerStats,
+      statusStats,
+      recentActivity: {
+        last24Hours: recentCount.count,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching request history stats:', error);
+    res.status(500).json({ error: 'Failed to fetch request history stats' });
+  }
+});
+
 // GET /api/request-history/:id - Get a single request with full request/response bodies
 requestHistoryRouter.get('/:id', (req: Request, res: Response) => {
   try {
     const db = getDb();
     const useHistoryCols = hasHistoryColumns();
-    const providerCol = useHistoryCols ? 'provider' : 'platform';
+    const providerCol = useHistoryCols ? 'COALESCE(provider, platform)' : 'platform';
     const bodyCols = useHistoryCols 
       ? 'request_body, response_body' 
       : 'NULL as request_body, NULL as response_body';
@@ -182,47 +229,6 @@ requestHistoryRouter.get('/:id', (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching request detail:', error);
     res.status(500).json({ error: 'Failed to fetch request detail' });
-  }
-});
-
-// GET /api/request-history/stats - Get basic statistics for request history
-requestHistoryRouter.get('/stats', (req: Request, res: Response) => {
-  try {
-    const db = getDb();
-    
-    // Get counts by platform
-    const platformStats = db.prepare(`
-      SELECT platform, COUNT(*) as count
-      FROM requests 
-      GROUP BY platform
-      ORDER BY count DESC
-    `).all() as { platform: string; count: number }[];
-    
-    // Get counts by status
-    const statusStats = db.prepare(`
-      SELECT status, COUNT(*) as count
-      FROM requests 
-      GROUP BY status
-    `).all() as { status: string; count: number }[];
-    
-    // Get recent activity (last 24 hours)
-    const recentCount = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM requests 
-      WHERE datetime(created_at) >= datetime('now', '-24 hours')
-    `).get() as { count: number };
-    
-    res.json({
-      totalRequests: platformStats.reduce((sum, p) => sum + p.count, 0),
-      platformStats,
-      statusStats,
-      recentActivity: {
-        last24Hours: recentCount.count,
-      },
-    });
-  } catch (error) {
-    console.error('Error fetching request history stats:', error);
-    res.status(500).json({ error: 'Failed to fetch request history stats' });
   }
 });
 

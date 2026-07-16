@@ -480,6 +480,7 @@
     "filters": "Filters",
     "platform": "Platform",
     "allPlatforms": "All platforms",
+    "allProviders": "All providers",
     "model": "Model",
     "modelPlaceholder": "Model ID",
     "status": "Status",
