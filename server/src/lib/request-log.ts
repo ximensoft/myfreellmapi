@@ -1,6 +1,23 @@
 import { getDb } from '../db/index.js';
 import { pruneRequestAnalytics } from '../services/request-retention.js';
 
+// Cache: whether the new history columns exist in the requests table.
+// Populated on first call; avoids a pragma scan on every request.
+let _hasHistoryColumns: boolean | null = null;
+
+function hasHistoryColumns(): boolean {
+  if (_hasHistoryColumns !== null) return _hasHistoryColumns;
+  try {
+    const db = getDb();
+    const cols = db.prepare("PRAGMA table_info(requests)").all() as { name: string }[];
+    const names = new Set(cols.map(c => c.name));
+    _hasHistoryColumns = names.has('request_body') && names.has('response_body') && names.has('provider');
+  } catch {
+    _hasHistoryColumns = false;
+  }
+  return _hasHistoryColumns;
+}
+
 // Append a row to the request analytics table. Shared by the chat proxy, the
 // responses path, and the fusion panel so every served (or failed) sub-request
 // is logged identically. Lives in a neutral lib module to avoid an import cycle
@@ -19,13 +36,26 @@ export function logRequest(
   // analytics split pinned vs auto traffic and detect failover overrides
   // (requested_model set but != model_id).
   requestedModel: string | null = null,
+  // Request and response bodies for history - only stored for successful requests
+  requestBody: string | null = null,
+  responseBody: string | null = null,
+  // Provider name for clearer display in history
+  provider: string | null = null,
 ) {
   try {
     const db = getDb();
-    db.prepare(`
-      INSERT INTO requests (platform, model_id, key_id, status, input_tokens, output_tokens, latency_ms, error, ttfb_ms, requested_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(platform, modelId, keyId, status, inputTokens, outputTokens, latencyMs, error, ttfbMs, requestedModel);
+    if (hasHistoryColumns()) {
+      db.prepare(`
+        INSERT INTO requests (platform, model_id, key_id, status, input_tokens, output_tokens, latency_ms, error, ttfb_ms, requested_model, request_body, response_body, provider)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(platform, modelId, keyId, status, inputTokens, outputTokens, latencyMs, error, ttfbMs, requestedModel, requestBody, responseBody, provider);
+    } else {
+      // Fallback for databases that haven't been migrated yet
+      db.prepare(`
+        INSERT INTO requests (platform, model_id, key_id, status, input_tokens, output_tokens, latency_ms, error, ttfb_ms, requested_model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(platform, modelId, keyId, status, inputTokens, outputTokens, latencyMs, error, ttfbMs, requestedModel);
+    }
     pruneRequestAnalytics({ db });
   } catch (e) {
     console.error('Failed to log request:', e);

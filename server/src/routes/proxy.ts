@@ -838,7 +838,21 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
             inputTokens: estimatedInputTokens,
             outputTokens: totalOutputTokens,
           });
-          logRequest(route.platform, route.modelId, route.keyId, 'success', estimatedInputTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId);
+          logRequest(
+            route.platform, 
+            route.modelId, 
+            route.keyId, 
+            'success', 
+            estimatedInputTokens, 
+            totalOutputTokens, 
+            Date.now() - start, 
+            null, 
+            ttfbMs, 
+            pinnedModelId,
+            JSON.stringify(req.body ?? {}),
+            null, // Cannot capture full streaming response
+            route.platform
+          );
           //console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
           return;
         } catch (streamErr: any) {
@@ -906,7 +920,21 @@ proxyRouter.post('/completions', async (req: Request, res: Response) => {
           inputTokens: result.usage?.prompt_tokens ?? 0,
           outputTokens: result.usage?.completion_tokens ?? 0,
         });
-        logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId);
+        logRequest(
+          route.platform, 
+          route.modelId, 
+          route.keyId, 
+          'success', 
+          result.usage?.prompt_tokens ?? 0, 
+          result.usage?.completion_tokens ?? 0, 
+          Date.now() - start, 
+          null, 
+          null, 
+          pinnedModelId,
+          JSON.stringify(req.body ?? {}),
+          JSON.stringify(result),
+          route.platform
+        );
         //console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       }
@@ -1800,7 +1828,8 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           }
         }
         // Normalize array-shaped message.content to a string on the way out (#166).
-        res.json(sanitizeResponse(normalizeOutboundContent(result)));
+        const responsePayload = sanitizeResponse(normalizeOutboundContent(result));
+        res.json(responsePayload);
 
         traceRouteEvent('Proxy', {
           event: 'ok',
@@ -1812,7 +1841,21 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           inputTokens: result.usage?.prompt_tokens ?? 0,
           outputTokens: result.usage?.completion_tokens ?? 0,
         });
-        logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId);
+        logRequest(
+          route.platform, 
+          route.modelId, 
+          route.keyId, 
+          'success', 
+          result.usage?.prompt_tokens ?? 0, 
+          result.usage?.completion_tokens ?? 0, 
+          Date.now() - start, 
+          null, 
+          null, 
+          pinnedModelId,
+          JSON.stringify(req.body ?? {}),
+          JSON.stringify(responsePayload),
+          route.platform
+        );
         //console.log(`[router] routeRequest: completed [chat/completions] ${route.platform}/${route.modelId} (${Date.now() - start}ms)`);
         return;
       }

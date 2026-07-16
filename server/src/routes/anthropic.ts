@@ -443,7 +443,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
           recordTokens(route.platform, route.modelId, route.keyId, fwdIn + fwdOut);
           recordSuccess(route.modelDbId);
           if (!resolved.pinned) setStickyModel(messages, route.modelDbId, sessionId);
-          logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId);
+          logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId, JSON.stringify(body ?? {}), null, route.platform);
           traceRouteEvent('Anthropic', {
             event: 'ok', requestId: `anthropic-${attempt}`, attempt,
             platform: route.platform, model: route.modelId,
@@ -459,7 +459,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         // Empty response → fail over, same as the OpenAI conversion path.
         const fwdContent = (fwd.body as any).content;
         if ((!Array.isArray(fwdContent) || fwdContent.length === 0) && !(fwd.body as any).stop_reason) {
-          logRequest(route.platform, route.modelId, route.keyId, 'error', fwdIn, 0, Date.now() - start, 'empty completion (native anthropic forward)', null, pinnedModelId);
+          logRequest(route.platform, route.modelId, route.keyId, 'error', fwdIn, 0, Date.now() - start, 'empty completion (native anthropic forward)', null, pinnedModelId, JSON.stringify(body ?? {}), null, route.platform);
           traceRouteEvent('Anthropic', {
             event: 'fail', requestId: `anthropic-${attempt}`, attempt,
             platform: route.platform, model: route.modelId,
@@ -482,7 +482,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         const responseBody = { ...fwd.body, model: requestedModel };
         res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
         if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
-        logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId);
+        logRequest(route.platform, route.modelId, route.keyId, 'success', fwdIn, fwdOut, Date.now() - start, null, null, pinnedModelId, JSON.stringify(body ?? {}), JSON.stringify(responseBody), route.platform);
         traceRouteEvent('Anthropic', {
           event: 'ok', requestId: `anthropic-${attempt}`, attempt,
           platform: route.platform, model: route.modelId,
@@ -496,6 +496,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
         await streamCompletion(res, route, messages, completionOptions, {
           start, attempt, requestedModel, estimatedInputTokens, tools, pinnedModelId,
           sessionId, pinned: resolved.pinned,
+          requestBody: JSON.stringify(req.body ?? {}),
         });
         return;
       }
@@ -507,7 +508,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
 
       // Empty completion → fail over, exactly like the OpenAI route.
       if (!respText && respToolCalls.length === 0) {
-        logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinnedModelId);
+        logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinnedModelId, JSON.stringify(req.body ?? {}), null, route.platform);
         traceRouteEvent('Anthropic', {
           event: 'fail',
           requestId: `anthropic-${attempt}`,
@@ -559,7 +560,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
 
       res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
       if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
-      logRequest(route.platform, route.modelId, route.keyId, 'success', promptTokens, completionTokens, Date.now() - start, null, null, pinnedModelId);
+      logRequest(route.platform, route.modelId, route.keyId, 'success', promptTokens, completionTokens, Date.now() - start, null, null, pinnedModelId, JSON.stringify(req.body ?? {}), JSON.stringify(anthropicResponse), route.platform);
       traceRouteEvent('Anthropic', {
         event: 'ok',
         requestId: `anthropic-${attempt}`,
@@ -575,7 +576,7 @@ anthropicRouter.post('/messages', async (req: Request, res: Response) => {
       return;
     } catch (err: any) {
       const safeError = sanitizeProviderErrorMessage(err.message);
-      logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, safeError, null, pinnedModelId);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, safeError, null, pinnedModelId, JSON.stringify(req.body ?? {}), null, route.platform);
       logForwardingError({
         timestamp: new Date().toISOString(),
         route: 'messages',
@@ -651,6 +652,7 @@ interface StreamCtx {
   pinnedModelId: string | null;
   sessionId?: string;
   pinned: boolean;
+  requestBody: string | null;
 }
 
 // Consume the provider's OpenAI-style stream and re-emit it as the Anthropic
@@ -708,7 +710,7 @@ async function streamCompletion(
         if (!messageStarted) throw new Error(`in-band provider error from ${route.displayName}: ${msg}`);
         writeSse(res, 'error', { type: 'error', error: { type: 'api_error', message: `Provider error (${route.displayName}): ${sanitizeProviderErrorMessage(String(msg))}` } });
         res.end();
-        logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, null, ctx.pinnedModelId);
+        logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
         throw new StreamAlreadyStarted();
       }
 
@@ -778,7 +780,7 @@ async function streamCompletion(
     recordTokens(route.platform, route.modelId, route.keyId, ctx.estimatedInputTokens + outputTokens);
     recordSuccess(route.modelDbId);
     if (!ctx.pinned) setStickyModel(messages, route.modelDbId, ctx.sessionId);
-    logRequest(route.platform, route.modelId, route.keyId, 'success', ctx.estimatedInputTokens, outputTokens, Date.now() - ctx.start, null, null, ctx.pinnedModelId);
+    logRequest(route.platform, route.modelId, route.keyId, 'success', ctx.estimatedInputTokens, outputTokens, Date.now() - ctx.start, null, null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
     traceRouteEvent('Anthropic', {
       event: 'ok',
       requestId: `anthropic-${ctx.attempt}`,
@@ -797,7 +799,7 @@ async function streamCompletion(
       // honestly instead of leaving Claude Code hanging, and stop the retry loop.
       writeSse(res, 'error', { type: 'error', error: { type: 'api_error', message: `Provider error (${route.displayName}): stream interrupted` } });
       try { res.end(); } catch { /* socket gone */ }
-      logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, sanitizeProviderErrorMessage(err.message), null, ctx.pinnedModelId);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', ctx.estimatedInputTokens, outputChars, Date.now() - ctx.start, sanitizeProviderErrorMessage(err.message), null, ctx.pinnedModelId, ctx.requestBody, null, route.platform);
       traceRouteEvent('Anthropic', {
         event: 'fail',
         requestId: `anthropic-${ctx.attempt}`,

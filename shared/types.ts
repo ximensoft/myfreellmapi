@@ -337,11 +337,14 @@ export interface RequestLog {
   id: number;
   platform: Platform;
   modelId: string;
+  provider: string;
   status: 'success' | 'error';
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
   error: string | null;
+  requestBody: string | null;
+  responseBody: string | null;
   createdAt: string;
 }
 
